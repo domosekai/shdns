@@ -112,6 +112,53 @@ Usage examples
 
     Hint: For those users who want to replicate ChinaDNS's behavior (no minimum RTT and safe RTT checks), set `-m` to `0` and `-s` larger than `-M`. (`-M` is similar to `-y` in ChinaDNS)
 
+    Sample output:
+        
+      $ shdns -b 127.0.0.1:5300 -l4 cnipv4.txt -l6 cnipv6.txt -m 30 -M 400 -s 100 -i 50 -v
+      2019/08/26 23:02:30.320622 Loaded 8394 domestic IPv4 entries
+      2019/08/26 23:02:30.323830 Loaded 1753 domestic IPv6 entries
+      2019/08/26 23:02:30.324422 Using nameserver 114.114.114.114:53
+      2019/08/26 23:02:30.324954 Using nameserver 223.5.5.5:53
+      2019/08/26 23:02:30.325751 Using nameserver 8.8.8.8:53
+      2019/08/26 23:02:30.326540 Using nameserver 1.1.1.1:53
+      2019/08/26 23:02:30.327370 Listening on UDP 127.0.0.1:5300
+      2019/08/26 23:02:31.876553 30793 127.0.0.1:62214 Query[A] zh.wikipedia.org. len 57
+      2019/08/26 23:02:31.881897 30793 114.114.114.114:53 Answer[CNAME] zh.wikipedia.org. dyna.wikimedia.org. len 90 3ms [DROP]
+      2019/08/26 23:02:31.882249 30793 114.114.114.114:53 Answer[A] dyna.wikimedia.org. 198.35.26.96 len 90 3ms GEOERR [DROP]
+      2019/08/26 23:02:31.882343 30793 8.8.8.8:53 Answer[A] zh.wikipedia.org. 31.13.66.6 len 61 3ms TOOFAST [DROP]
+      2019/08/26 23:02:31.887136 30793 223.5.5.5:53 Answer[CNAME] zh.wikipedia.org. dyna.wikimedia.org. len 79 8ms [DROP]
+      2019/08/26 23:02:31.887276 30793 223.5.5.5:53 Answer[A] dyna.wikimedia.org. 198.35.26.96 len 79 8ms GEOERR [DROP]
+      2019/08/26 23:02:31.893583 30793 8.8.8.8:53 Answer[A] zh.wikipedia.org. 66.220.151.20 len 50 14ms TOOFAST [DROP]
+      2019/08/26 23:02:31.893850 30793 8.8.8.8:53 Answer[A] zh.wikipedia.org. 67.228.74.123 len 50 15ms TOOFAST [DROP]
+      2019/08/26 23:02:31.895050 30793 1.1.1.1:53 Answer[A] zh.wikipedia.org. 93.46.8.89 len 50 15ms TOOFAST [DROP]
+      2019/08/26 23:02:31.897547 30793 114.114.114.114:53 Answer[CNAME] zh.wikipedia.org. dyna.wikimedia.org. len 102 19ms [DROP]
+      2019/08/26 23:02:31.899416 30793 114.114.114.114:53 Answer[A] dyna.wikimedia.org. 198.35.26.96 len 102 19ms GEOERR [DROP]
+      2019/08/26 23:02:31.930160 30793 1.1.1.1:53 Answer[CNAME] zh.wikipedia.org. dyna.wikimedia.org. len 90 50ms [ACCEPT]
+      2019/08/26 23:02:31.930418 30793 1.1.1.1:53 Answer[A] dyna.wikimedia.org. 103.102.166.224 len 90 50ms [ACCEPT]
+
+      $ dig @127.0.0.1 -p 5300 zh.wikipedia.org
+
+      ; <<>> DiG 9.11.3-1ubuntu1.8-Ubuntu <<>> @127.0.0.1 -p 5300 zh.wikipedia.org
+      ; (1 server found)
+      ;; global options: +cmd
+      ;; Got answer:
+      ;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 30793
+      ;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+      ;; OPT PSEUDOSECTION:
+      ; EDNS: version: 0, flags:; udp: 1452
+      ;; QUESTION SECTION:
+      ;zh.wikipedia.org.              IN      A
+
+      ;; ANSWER SECTION:
+      zh.wikipedia.org.       3971    IN      CNAME   dyna.wikimedia.org.
+      dyna.wikimedia.org.     285     IN      A       103.102.166.224
+
+      ;; Query time: 54 msec
+      ;; SERVER: 127.0.0.1#5300(127.0.0.1)
+      ;; WHEN: Mon Aug 26 23:02:31 CST 2019
+      ;; MSG SIZE  rcvd: 90
+    
 * Scenario 2: Home broadband + Trustworthy DNS over UDP or VPN
 
       shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 400 -w 50 -t -f 208.67.222.222:443

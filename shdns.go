@@ -28,6 +28,9 @@ var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms)
 var maxtime = flag.Int("M", 400, "Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH. (Max=2900)")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
 var verbose = flag.Bool("v", false, "Verbose")
+var showver = flag.Bool("V", false, "Show version")
+var version = "unknown"
+var builddate = "unknown"
 
 type servertype int
 
@@ -482,6 +485,10 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
+	if *showver {
+		fmt.Printf("shdns version %s (built %s)\n", version, builddate)
+		return
+	}
 	if *ipnet4file != "" {
 		cnipnet4 = parseiplist(*ipnet4file, net.IPv4len)
 		if cnipnet4 != nil {
@@ -490,7 +497,7 @@ func main() {
 		}
 	}
 	if cnipnet4 == nil {
-		errlog.Fatalln("CN IPv4 list must be provided")
+		errlog.Fatalln("Domestic IPv4 list must be provided")
 	}
 	if *ipnet6file != "" {
 		cnipnet6 = parseiplist(*ipnet6file, net.IPv6len)
