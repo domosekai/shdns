@@ -301,6 +301,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 		typeerr := false
 		hascname := false
 		hasa := false
+		hasaaaa := false
 		blacklisted := false
 		acount := 0
 		var bufs []bytes.Buffer
@@ -351,6 +352,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 					}
 				}
 			case dnsmessage.TypeAAAA:
+				hasaaaa = true
 				if cnipnet6 != nil || blackips6 != nil || *verbose {
 					r, _ := p.AAAAResource()
 					ip := net.IP(r.AAAA[:])
@@ -402,6 +404,10 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 				bufs = append(bufs, buf)
 			}
 		} // answer section parsed
+		hasauth := false
+		if _, err := p.Authority(); err == nil {
+			hasauth = true
+		}
 		dnssecerr := false
 		if dnssec && ns.stype == foreign {
 			p.SkipAllAuthorities()
@@ -418,7 +424,8 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 		}
 		if !dnssecerr && !geoerr && !typeerr && !toofast && !blacklisted &&
 			(h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeA && hasa ||
-				h.RCode == dnsmessage.RCodeSuccess && qtype != dnsmessage.TypeA ||
+				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hasauth) ||
+				h.RCode == dnsmessage.RCodeSuccess && qtype != dnsmessage.TypeA && qtype != dnsmessage.TypeAAAA ||
 				h.RCode == dnsmessage.RCodeNameError) {
 			switch ns.stype {
 			case domestic:
