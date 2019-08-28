@@ -203,30 +203,36 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 		}
 	}
 	ch := make(chan []byte)
-	go sendandreceive(payload, ch, qs[0].Type, dnssec)
+	chsave := make(chan []byte)
+	go sendandreceive(payload, ch, chsave, qs[0].Type, dnssec)
 	timer := time.After(3 * time.Second) // must be longer than query timeout, or goroutines may block
 	answered := false
-	received := 0
+	var latestanswer []byte
 	for {
 		select {
 		case a := <-ch:
-			received++
 			if !answered {
 				if _, err := inconn.WriteTo(a, addr); err != nil {
 					errlog.Println(err)
 				}
 				answered = true
 			}
-			if received == len(servers) && !*verbose { // don't close before all received or goroutines may block
-				return
+		case a := <-chsave:
+			if !answered {
+				latestanswer = a
 			}
 		case <-timer:
+			if !answered {
+				if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
+					errlog.Println(err)
+				}
+			}
 			return
 		}
 	}
 }
 
-func sendandreceive(payload []byte, ch chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
+func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
 	recvch := make([]chan []byte, len(servers))
 	for i := range recvch {
 		recvch[i] = make(chan []byte)
@@ -242,7 +248,7 @@ func sendandreceive(payload []byte, ch chan<- []byte, qtype dnsmessage.Type, dns
 		if _, err := outconn.WriteTo(payload, ns.udpaddr); err != nil {
 			continue
 		}
-		go parseanswer(ns, time.Now(), recvch[i], ch, dnssec, qtype)
+		go parseanswer(ns, time.Now(), recvch[i], ch, chsave, dnssec, qtype)
 	}
 	outconn.SetReadDeadline(time.Now().Add(time.Duration(*maxtime) * time.Millisecond))
 	for {
@@ -271,10 +277,9 @@ func lookupserver(addr *net.UDPAddr) (int, bool) {
 	return 0, false
 }
 
-func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch chan<- []byte, dnssec bool, qtype dnsmessage.Type) {
+func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, chsave chan<- []byte, dnssec bool, qtype dnsmessage.Type) {
 	pcount := 0
 	var firstrtt time.Duration
-	var bestanswer []byte
 	answered := false
 	for {
 		a, ok := <-recvch
@@ -297,12 +302,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 			continue
 		}
 		p.SkipAllQuestions()
-		geoerr := false
-		typeerr := false
-		hascname := false
-		hasa := false
-		hasaaaa := false
-		blacklisted := false
+		var geoerr, typeerr, hascname, hasa, hasaaaa, blacklisted, hasauth, dnssecerr bool
 		acount := 0
 		var bufs []bytes.Buffer
 		for {
@@ -404,11 +404,9 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 				bufs = append(bufs, buf)
 			}
 		} // answer section parsed
-		hasauth := false
 		if _, err := p.Authority(); err == nil {
 			hasauth = true
 		}
-		dnssecerr := false
 		if dnssec && ns.stype == foreign {
 			p.SkipAllAuthorities()
 			if rh, err := p.AdditionalHeader(); err == nil && rh.DNSSECAllowed() {
@@ -460,7 +458,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 						if *verbose {
 							addtag(bufs, " [SAVE]")
 						}
-						bestanswer = a
+						chsave <- a
 					}
 				} else {
 					if rtt-firstrtt > time.Duration(*maxdur)*time.Millisecond || hascname || acount > 1 {
@@ -479,7 +477,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 						if *verbose {
 							addtag(bufs, " [SAVE]")
 						}
-						bestanswer = a
+						chsave <- a
 					}
 				}
 			}
@@ -496,9 +494,6 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch cha
 		if answered && !*verbose {
 			return
 		}
-	}
-	if !answered && len(bestanswer) > 0 {
-		ch <- bestanswer
 	}
 }
 

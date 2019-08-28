@@ -75,6 +75,7 @@ Parameters
 ----
     -M int
         Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH. (Max=2900) (default 400)
+    -V  Show version
     -b string
         Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
     -d string
@@ -95,8 +96,8 @@ Parameters
         Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped. (default 30)
     -s int
         Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted. (default 100)
-    -t    Trustworthy mode. Foreign answers will not be checked for validity.
-    -v    Verbose
+    -t  Trustworthy mode. Foreign answers will not be checked for validity.
+    -v  Verbose
     -w int
         Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized. (default 50)
         
@@ -110,7 +111,7 @@ Usage examples
     
     **Do not use the parameters as is!**
 
-    Hint: For those users who want to replicate ChinaDNS's behavior (no minimum RTT and safe RTT checks), set `-m` to `0` and `-s` larger than `-M`. (`-M` is similar to `-y` in ChinaDNS)
+    Hint: For those users who want to replicate ChinaDNS's behavior (no minimum RTT and safe RTT checks, always wait until the end of the delay), set `-m` to `0`, `-s` and `-i` equal to or larger than `-M`. (`-M` is similar to `-y` in ChinaDNS, default is 300)
 
     Sample output:
         
@@ -167,7 +168,7 @@ Usage examples
 * Scenario 3: Home broadband + Trustworthy local caching DNS proxy (e.g. DOH)
 
       shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 2000 -w 50 -t -f 127.0.0.1:5300
-    This is very similar to scenario 2. The only difference is that here a local caching server is set as the foreign server. A large value is used for timeout due to the time-consuming TLS handshake and `-w` is critical to ensure domestic CDN-friendly.
+    This is very similar to scenario 2. The only difference is that here a local caching server is set as the foreign server. A large value is used for timeout due to the time-consuming TLS handshake and `-w` is critical to be domestic CDN-friendly.
 
 Compilation
 ----
