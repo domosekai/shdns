@@ -222,7 +222,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 				latestanswer = a
 			}
 		case <-timer:
-			if !answered {
+			if !answered && latestanswer != nil {
 				if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
 					errlog.Println(err)
 				}
