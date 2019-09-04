@@ -42,7 +42,7 @@ var blacklist6file = flag.String("k6", "", "IPv6 blacklist file for all nameserv
 var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped.")
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted.")
 var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized.")
-var maxtime = flag.Int("M", 400, "Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH. (Max=2900)")
+var maxtime = flag.Int("M", 400, "Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH.")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
 var verbose = flag.Bool("v", false, "Verbose")
 var showver = flag.Bool("V", false, "Show version")
@@ -205,7 +205,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	ch := make(chan []byte)
 	chsave := make(chan []byte)
 	go sendandreceive(payload, ch, chsave, qs[0].Type, dnssec)
-	timer := time.After(3 * time.Second) // must be longer than query timeout, or goroutines may block
+	timer := time.After(time.Duration(*maxtime+100) * time.Millisecond) // must be longer than query timeout, or goroutines may block
 	answered := false
 	var latestanswer []byte
 	for {
