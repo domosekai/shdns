@@ -74,7 +74,7 @@ I very much appreciate the simple idea behind ChinaDNS and believe many function
 Parameters
 ----
     -M int
-        Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH. (Max=2900) (default 400)
+        Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH. (default 400)
     -V  Show version
     -b string
         Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
