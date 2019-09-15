@@ -84,9 +84,9 @@ var (
 	errlog               = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 )
 
-func parseservers(str string, stype servertype) (nss []nameserver) {
-	servers := strings.Split(str, ",")
-	for _, s := range servers {
+func parseservers(str string, stype servertype) {
+	serverstr := strings.Split(str, ",")
+	for _, s := range serverstr {
 		switch c := strings.Count(s, ":"); {
 		case c == 0:
 			s += ":53"
@@ -100,8 +100,12 @@ func parseservers(str string, stype servertype) (nss []nameserver) {
 		if addr, err := net.ResolveUDPAddr("udp", s); err != nil {
 			errlog.Fatalf("Invalid nameserver %s: %v", s, err)
 		} else {
-			nss = append(nss, nameserver{udpaddr: addr, stype: stype})
-			logger.Printf("Using nameserver %s", s)
+			if _, exist := lookupserver(addr); !exist {
+				servers = append(servers, nameserver{udpaddr: addr, stype: stype})
+				logger.Printf("Using nameserver %s", s)
+			} else {
+				errlog.Fatalf("Nameserver exists: %s", s)
+			}
 		}
 	}
 	return
@@ -259,8 +263,6 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 		}
 		if i, ok := lookupserver(addr); ok {
 			recvch[i] <- payload[:n]
-		} else {
-			continue
 		}
 	}
 	for _, ch := range recvch {
@@ -270,7 +272,7 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 
 func lookupserver(addr *net.UDPAddr) (int, bool) {
 	for i, s := range servers {
-		if s.udpaddr.IP.Equal(addr.IP) {
+		if s.udpaddr.IP.Equal(addr.IP) && s.udpaddr.Port == addr.Port && s.udpaddr.Zone == addr.Zone {
 			return i, true
 		}
 	}
@@ -537,8 +539,8 @@ func main() {
 			logger.Printf("Loaded %d blacklisted IPv6 entries", len(blackips6))
 		}
 	}
-	servers = append(servers, parseservers(*dservers, domestic)...)
-	servers = append(servers, parseservers(*fservers, foreign)...)
+	parseservers(*dservers, domestic)
+	parseservers(*fservers, foreign)
 	if *trusted {
 		logger.Print("Foreign servers in trustworthy mode")
 		*minsafe = 0
