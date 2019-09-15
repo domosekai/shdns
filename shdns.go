@@ -222,12 +222,13 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 					}
 					answered = true
 				}
-			} else { // receive timeout
+			} else {
 				if !answered && latestanswer != nil {
 					if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
 						errlog.Println(err)
 					}
 				}
+				logger.Printf("%d Connection closed", h.ID)
 				return
 			}
 		case a := <-chsave:
@@ -239,6 +240,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 }
 
 func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
+	defer close(ch)
 	recvch := make([]chan []byte, len(servers))
 	for i := range recvch {
 		recvch[i] = make(chan []byte)
@@ -255,6 +257,7 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 			continue
 		}
 		go parseanswer(ns, time.Now(), recvch[i], ch, chsave, dnssec, qtype)
+		defer close(recvch[i])
 	}
 	outconn.SetReadDeadline(time.Now().Add(time.Duration(*initimeout) * time.Second))
 	received := false
@@ -262,7 +265,8 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
-			break // receive timeout
+			time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing to channel
+			return
 		}
 		if !received {
 			received = true
@@ -272,11 +276,6 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 			recvch[i] <- payload[:n]
 		}
 	}
-	for _, ch := range recvch {
-		close(ch)
-	}
-	time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing to channel
-	close(ch)
 }
 
 func lookupserver(addr *net.UDPAddr) (int, bool) {
@@ -295,7 +294,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 	for {
 		a, ok := <-recvch
 		if !ok {
-			break // receive timeout
+			return // receive timeout
 		}
 		rtt := time.Since(senttime)
 		toofast := false
