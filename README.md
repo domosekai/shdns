@@ -74,7 +74,7 @@ I very much appreciate the simple idea behind ChinaDNS and believe many function
 Parameters
 ----
     -M int
-        Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH. (default 400)
+        Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH. (default 500)
     -T int
         Timeout (s) for the first reply. (default 5)
     -V  Show version

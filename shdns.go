@@ -43,7 +43,7 @@ var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameserver
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted.")
 var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized.")
 var initimeout = flag.Int("T", 5, "Timeout (s) for the first reply.")
-var subtimeout = flag.Int("M", 400, "Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH.")
+var subtimeout = flag.Int("M", 500, "Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH.")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
 var verbose = flag.Bool("v", false, "Verbose")
 var showver = flag.Bool("V", false, "Show version")
@@ -265,7 +265,7 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
-			time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing to channel
+			time.Sleep(50 * time.Millisecond) // wait for goroutines to finish writing to channel
 			return
 		}
 		if !received {
@@ -553,6 +553,9 @@ func main() {
 		logger.Print("Foreign servers in trustworthy mode")
 		*minsafe = 0
 		*minrtt = 0
+		if *subtimeout < *minwait {
+			*subtimeout = *minwait
+		}
 	}
 	loc, _ := net.ResolveUDPAddr("udp", *localnet)
 	inconn, err := net.ListenUDP("udp", loc)
