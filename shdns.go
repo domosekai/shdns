@@ -42,7 +42,8 @@ var blacklist6file = flag.String("k6", "", "IPv6 blacklist file for all nameserv
 var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped.")
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted.")
 var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized.")
-var maxtime = flag.Int("M", 400, "Query timeout and foreign answers' maximum delay (ms). Use a larger value for DOH.")
+var initimeout = flag.Int("T", 5, "Timeout (s) for the first reply.")
+var subtimeout = flag.Int("M", 400, "Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH.")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
 var verbose = flag.Bool("v", false, "Verbose")
 var showver = flag.Bool("V", false, "Show version")
@@ -209,29 +210,30 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	ch := make(chan []byte)
 	chsave := make(chan []byte)
 	go sendandreceive(payload, ch, chsave, qs[0].Type, dnssec)
-	timer := time.After(time.Duration(*maxtime+100) * time.Millisecond) // must be longer than query timeout, or goroutines may block
 	answered := false
 	var latestanswer []byte
 	for {
 		select {
-		case a := <-ch:
-			if !answered {
-				if _, err := inconn.WriteTo(a, addr); err != nil {
-					errlog.Println(err)
+		case a, ok := <-ch:
+			if ok {
+				if !answered {
+					if _, err := inconn.WriteTo(a, addr); err != nil {
+						errlog.Println(err)
+					}
+					answered = true
 				}
-				answered = true
+			} else { // receive timeout
+				if !answered && latestanswer != nil {
+					if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
+						errlog.Println(err)
+					}
+				}
+				return
 			}
 		case a := <-chsave:
 			if !answered {
 				latestanswer = a
 			}
-		case <-timer:
-			if !answered && latestanswer != nil {
-				if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
-					errlog.Println(err)
-				}
-			}
-			return
 		}
 	}
 }
@@ -254,12 +256,17 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 		}
 		go parseanswer(ns, time.Now(), recvch[i], ch, chsave, dnssec, qtype)
 	}
-	outconn.SetReadDeadline(time.Now().Add(time.Duration(*maxtime) * time.Millisecond))
+	outconn.SetReadDeadline(time.Now().Add(time.Duration(*initimeout) * time.Second))
+	received := false
 	for {
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
 			break // receive timeout
+		}
+		if !received {
+			received = true
+			outconn.SetReadDeadline(time.Now().Add(time.Duration(*subtimeout) * time.Millisecond))
 		}
 		if i, ok := lookupserver(addr); ok {
 			recvch[i] <- payload[:n]
@@ -268,6 +275,8 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 	for _, ch := range recvch {
 		close(ch)
 	}
+	time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing to channel
+	close(ch)
 }
 
 func lookupserver(addr *net.UDPAddr) (int, bool) {
