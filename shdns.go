@@ -236,7 +236,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 		case a, ok := <-ch:
 			if ok {
 				if !answered {
-					if _, err := inconn.WriteTo(a, addr); err != nil {
+					if _, err := inconn.WriteToUDP(a, addr); err != nil {
 						errlog.Println(err)
 					}
 					answered = true
@@ -246,7 +246,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 				}
 			} else {
 				if !answered && latestanswer != nil {
-					if _, err := inconn.WriteTo(latestanswer, addr); err != nil {
+					if _, err := inconn.WriteToUDP(latestanswer, addr); err != nil {
 						errlog.Println(err)
 					}
 				}
@@ -268,7 +268,7 @@ func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []by
 	recvch := make([]chan []byte, len(servers))
 	senttime := time.Now()
 	for i, ns := range servers {
-		if _, err := outconn.WriteTo(payload, ns.udpaddr); err != nil {
+		if _, err := outconn.WriteToUDP(payload, ns.udpaddr); err != nil {
 			continue
 		}
 		recvch[i] = make(chan []byte)
