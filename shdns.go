@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -101,6 +102,17 @@ func parseservers(str string, stype servertype) {
 		if addr, err := net.ResolveUDPAddr("udp", s); err != nil {
 			errlog.Fatalf("Invalid nameserver %s: %v", s, err)
 		} else {
+			if addr.Zone != "" {
+				if zoneid, err := strconv.Atoi(addr.Zone); err == nil {
+					if ifi, err := net.InterfaceByIndex(zoneid); err == nil {
+						addr.Zone = ifi.Name
+					} else {
+						errlog.Fatalf("IPv6 zone invalid: %s", s)
+					}
+				} else if _, err := net.InterfaceByName(addr.Zone); err != nil {
+					errlog.Fatalf("IPv6 zone invalid: %s", s)
+				}
+			}
 			if _, exist := lookupserver(addr); !exist {
 				servers = append(servers, nameserver{udpaddr: addr, stype: stype})
 				logger.Printf("Using nameserver %s", s)
