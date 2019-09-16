@@ -219,8 +219,8 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 			logger.Println(&buf)
 		}
 	}
-	ch := make(chan []byte, len(servers))
-	chsave := make(chan []byte, len(servers))
+	ch := make(chan []byte)
+	chsave := make(chan []byte)
 	loc, _ := net.ResolveUDPAddr("udp", "")
 	outconn, err := net.ListenUDP("udp", loc)
 	if err != nil {
@@ -241,7 +241,7 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 					}
 					answered = true
 					if !*verbose {
-						return
+						outconn.Close()
 					}
 				}
 			} else {
