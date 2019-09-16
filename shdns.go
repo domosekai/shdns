@@ -46,7 +46,7 @@ var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms)
 var initimeout = flag.Int("T", 5, "Timeout (s) for the first reply.")
 var subtimeout = flag.Int("M", 500, "Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH.")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
-var verbose = flag.Bool("v", false, "Verbose")
+var verbose = flag.Bool("v", false, "Verbose mode. Connection will remain open after replied until timeout.")
 var showver = flag.Bool("V", false, "Show version")
 var version = "unknown"
 var builddate = "unknown"
@@ -221,7 +221,14 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	}
 	ch := make(chan []byte)
 	chsave := make(chan []byte)
-	go sendandreceive(payload, ch, chsave, qs[0].Type, dnssec)
+	loc, _ := net.ResolveUDPAddr("udp", "")
+	outconn, err := net.ListenUDP("udp", loc)
+	if err != nil {
+		errlog.Println(err)
+		return
+	}
+	defer outconn.Close()
+	go sendandreceive(payload, outconn, ch, chsave, qs[0].Type, dnssec)
 	answered := false
 	var latestanswer []byte
 	for {
@@ -233,6 +240,9 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 						errlog.Println(err)
 					}
 					answered = true
+					if !*verbose {
+						return
+					}
 				}
 			} else {
 				if !answered && latestanswer != nil {
@@ -240,7 +250,9 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 						errlog.Println(err)
 					}
 				}
-				logger.Printf("%d Connection closed", h.ID)
+				if *verbose {
+					logger.Printf("%d Connection closed", h.ID)
+				}
 				return
 			}
 		case a := <-chsave:
@@ -251,23 +263,14 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	}
 }
 
-func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
+func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
 	defer close(ch)
 	recvch := make([]chan []byte, len(servers))
-	for i := range recvch {
-		recvch[i] = make(chan []byte)
-	}
-	loc, _ := net.ResolveUDPAddr("udp", "")
-	outconn, err := net.ListenUDP("udp", loc)
-	if err != nil {
-		errlog.Println(err)
-		return
-	}
-	defer outconn.Close()
 	for i, ns := range servers {
 		if _, err := outconn.WriteTo(payload, ns.udpaddr); err != nil {
 			continue
 		}
+		recvch[i] = make(chan []byte)
 		go parseanswer(ns, time.Now(), recvch[i], ch, chsave, dnssec, qtype)
 		defer close(recvch[i])
 	}
@@ -277,7 +280,7 @@ func sendandreceive(payload []byte, ch, chsave chan<- []byte, qtype dnsmessage.T
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
-			time.Sleep(50 * time.Millisecond) // wait for goroutines to finish writing to channel
+			time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing before closing channel
 			return
 		}
 		if !received {
@@ -306,7 +309,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 	for {
 		a, ok := <-recvch
 		if !ok {
-			return // receive timeout
+			return // receive channel closed
 		}
 		rtt := time.Since(senttime)
 		toofast := false
@@ -512,9 +515,6 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			for _, buf := range bufs {
 				logger.Println(&buf)
 			}
-		}
-		if answered && !*verbose {
-			return
 		}
 	}
 }

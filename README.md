@@ -99,7 +99,7 @@ Parameters
     -s int
         Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted. (default 100)
     -t  Trustworthy mode. Foreign answers will not be checked for validity.
-    -v  Verbose
+    -v  Verbose mode. Connection will remain open after replied until timeout.
     -w int
         Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized. (default 50)
         
