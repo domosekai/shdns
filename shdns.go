@@ -219,8 +219,8 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 			logger.Println(&buf)
 		}
 	}
-	ch := make(chan []byte)
-	chsave := make(chan []byte)
+	ch := make(chan []byte, len(servers))
+	chsave := make(chan []byte, len(servers))
 	loc, _ := net.ResolveUDPAddr("udp", "")
 	outconn, err := net.ListenUDP("udp", loc)
 	if err != nil {
@@ -266,20 +266,22 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
 	defer close(ch)
 	recvch := make([]chan []byte, len(servers))
+	senttime := time.Now()
 	for i, ns := range servers {
 		if _, err := outconn.WriteTo(payload, ns.udpaddr); err != nil {
 			continue
 		}
 		recvch[i] = make(chan []byte)
-		go parseanswer(ns, time.Now(), recvch[i], ch, chsave, dnssec, qtype)
+		go parseanswer(ns, senttime, recvch[i], ch, chsave, dnssec, qtype)
 		defer close(recvch[i])
 	}
-	outconn.SetReadDeadline(time.Now().Add(time.Duration(*initimeout) * time.Second))
+	outconn.SetReadDeadline(senttime.Add(time.Duration(*initimeout) * time.Second))
 	received := false
 	for {
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
+			time.Sleep(time.Duration(*minwait)*time.Millisecond - time.Since(senttime))
 			time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing before closing channel
 			return
 		}
@@ -565,9 +567,8 @@ func main() {
 		logger.Print("Foreign servers in trustworthy mode")
 		*minsafe = 0
 		*minrtt = 0
-		if *subtimeout < *minwait {
-			*subtimeout = *minwait
-		}
+	} else {
+		*minwait = 0
 	}
 	loc, _ := net.ResolveUDPAddr("udp", *localnet)
 	inconn, err := net.ListenUDP("udp", loc)
