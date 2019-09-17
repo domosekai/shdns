@@ -86,21 +86,25 @@ var (
 	errlog               = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 )
 
+func parseudpaddr(str string) (*net.UDPAddr, error) {
+	_, _, err := net.SplitHostPort(str)
+	if err == nil {
+		return net.ResolveUDPAddr("udp", str)
+	}
+	if _, _, err := net.SplitHostPort(str + ":53"); err == nil {
+		return net.ResolveUDPAddr("udp", str+":53")
+	}
+	if _, _, err := net.SplitHostPort("[" + str + "]:53"); err == nil {
+		return net.ResolveUDPAddr("udp", "["+str+"]:53")
+	}
+	return nil, err
+}
+
 func parseservers(str string, stype servertype) {
 	serverstr := strings.Split(str, ",")
 	for _, s := range serverstr {
-		switch c := strings.Count(s, ":"); {
-		case c == 0:
-			s += ":53"
-		case c > 1:
-			if !strings.Contains(s, "]") {
-				s = "[" + s + "]:53"
-			} else if s[len(s)-1] == ']' {
-				s += ":53"
-			}
-		}
-		if addr, err := net.ResolveUDPAddr("udp", s); err != nil {
-			errlog.Fatalf("Invalid nameserver %s: %v", s, err)
+		if addr, err := parseudpaddr(s); err != nil {
+			errlog.Fatalf("Invalid nameserver: %s", s)
 		} else {
 			if addr.Zone != "" {
 				if zoneid, err := strconv.Atoi(addr.Zone); err == nil {
@@ -115,7 +119,7 @@ func parseservers(str string, stype servertype) {
 			}
 			if _, exist := lookupserver(addr); !exist {
 				servers = append(servers, nameserver{udpaddr: addr, stype: stype})
-				logger.Printf("Using nameserver %s", s)
+				logger.Printf("Using nameserver %s", addr)
 			} else {
 				errlog.Fatalf("Nameserver exists: %s", s)
 			}
@@ -570,13 +574,16 @@ func main() {
 	} else {
 		*minwait = 0
 	}
-	loc, _ := net.ResolveUDPAddr("udp", *localnet)
-	inconn, err := net.ListenUDP("udp", loc)
+	addr, err := parseudpaddr(*localnet)
+	if err != nil {
+		errlog.Fatalf("Invalid binding address: %s", *localnet)
+	}
+	inconn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		errlog.Fatalln(err)
 	}
 	defer inconn.Close()
-	logger.Printf("Listening on UDP %s", *localnet)
+	logger.Printf("Listening on UDP %s", addr)
 	for {
 		payload := make([]byte, 1500)
 		if n, addr, err := inconn.ReadFromUDP(payload); err != nil {
