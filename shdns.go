@@ -267,11 +267,6 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	}
 }
 
-func synandclose(recvch chan []byte, chdone chan bool) {
-	close(recvch)
-	<-chdone
-}
-
 func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
 	defer close(ch)
 	recvch := make([]chan []byte, len(servers))
@@ -284,7 +279,10 @@ func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []by
 		recvch[i] = make(chan []byte)
 		chdone[i] = make(chan bool)
 		go parseanswer(ns, senttime, recvch[i], ch, chsave, chdone[i], dnssec, qtype)
-		defer synandclose(recvch[i], chdone[i])
+		defer func(recvch chan []byte, chdone chan bool) {
+			close(recvch)
+			<-chdone
+		}(recvch[i], chdone[i])
 	}
 	outconn.SetReadDeadline(senttime.Add(time.Duration(*initimeout) * time.Second))
 	received := false
