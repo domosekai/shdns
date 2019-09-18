@@ -267,17 +267,24 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	}
 }
 
+func synandclose(recvch chan []byte, chdone chan bool) {
+	close(recvch)
+	<-chdone
+}
+
 func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []byte, qtype dnsmessage.Type, dnssec bool) {
 	defer close(ch)
 	recvch := make([]chan []byte, len(servers))
+	chdone := make([]chan bool, len(servers))
 	senttime := time.Now()
 	for i, ns := range servers {
 		if _, err := outconn.WriteToUDP(payload, ns.udpaddr); err != nil {
 			continue
 		}
 		recvch[i] = make(chan []byte)
-		go parseanswer(ns, senttime, recvch[i], ch, chsave, dnssec, qtype)
-		defer close(recvch[i])
+		chdone[i] = make(chan bool)
+		go parseanswer(ns, senttime, recvch[i], ch, chsave, chdone[i], dnssec, qtype)
+		defer synandclose(recvch[i], chdone[i])
 	}
 	outconn.SetReadDeadline(senttime.Add(time.Duration(*initimeout) * time.Second))
 	received := false
@@ -285,8 +292,6 @@ func sendandreceive(payload []byte, outconn *net.UDPConn, ch, chsave chan<- []by
 		payload := make([]byte, 1500)
 		n, addr, err := outconn.ReadFromUDP(payload)
 		if err != nil {
-			time.Sleep(time.Duration(*minwait)*time.Millisecond - time.Since(senttime))
-			time.Sleep(100 * time.Millisecond) // wait for goroutines to finish writing before closing channel
 			return
 		}
 		if !received {
@@ -308,13 +313,14 @@ func lookupserver(addr *net.UDPAddr) (int, bool) {
 	return 0, false
 }
 
-func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, chsave chan<- []byte, dnssec bool, qtype dnsmessage.Type) {
+func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, chsave chan<- []byte, chdone chan<- bool, dnssec bool, qtype dnsmessage.Type) {
 	pcount := 0
 	var firstrtt time.Duration
 	answered := false
 	for {
 		a, ok := <-recvch
 		if !ok {
+			chdone <- true
 			return // receive channel closed
 		}
 		rtt := time.Since(senttime)
@@ -571,8 +577,6 @@ func main() {
 		logger.Print("Foreign servers in trustworthy mode")
 		*minsafe = 0
 		*minrtt = 0
-	} else {
-		*minwait = 0
 	}
 	addr, err := parseudpaddr(*localnet)
 	if err != nil {
