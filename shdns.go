@@ -457,7 +457,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 		}
 		if !dnssecerr && !geoerr && !typeerr && !toofast && !blacklisted &&
 			(h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeA && hasa ||
-				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hasauth) ||
+				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hascname || hasauth) ||
 				h.RCode == dnsmessage.RCodeSuccess && qtype != dnsmessage.TypeA && qtype != dnsmessage.TypeAAAA ||
 				h.RCode == dnsmessage.RCodeNameError) {
 			switch ns.stype {
