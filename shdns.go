@@ -211,14 +211,20 @@ func handlequery(addr *net.UDPAddr, payload []byte, inconn *net.UDPConn) { // ne
 	p.SkipAllAnswers()
 	p.SkipAllAuthorities()
 	dnssec := false
-	rh, err := p.AdditionalHeader()
-	if err == nil && rh.DNSSECAllowed() {
-		dnssec = true
-		if *verbose {
-			addtag(bufs, " DNSSEC")
+	for {
+		rh, err := p.AdditionalHeader()
+		if err != nil {
+			break
 		}
+		if rh.Type == dnsmessage.TypeOPT && rh.DNSSECAllowed() {
+			dnssec = true
+		}
+		p.SkipAdditional()
 	}
 	if *verbose {
+		if dnssec {
+			addtag(bufs, " DNSSEC")
+		}
 		for _, buf := range bufs {
 			logger.Println(&buf)
 		}
@@ -337,7 +343,8 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			continue
 		}
 		p.SkipAllQuestions()
-		var geoerr, typeerr, hascname, hasa, hasaaaa, blacklisted, hasauth, dnssecerr bool
+		var geoerr, typeerr, hascname, hasa, hasaaaa, blacklisted, hasauth, dnssecerr, addterr bool
+		dnssecerr = dnssec && ns.stype == foreign
 		acount := 0
 		var bufs []bytes.Buffer
 		for {
@@ -441,21 +448,36 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 		} // answer section parsed
 		if _, err := p.Authority(); err == nil {
 			hasauth = true
-		}
-		if dnssec && ns.stype == foreign {
 			p.SkipAllAuthorities()
-			if rh, err := p.AdditionalHeader(); err == nil && rh.DNSSECAllowed() {
-				if *verbose {
-					addtag(bufs, " DNSSEC")
-				}
-			} else {
-				dnssecerr = true
-				if *verbose {
-					addtag(bufs, " NODNSSEC")
+		}
+		for {
+			rh, err := p.AdditionalHeader()
+			if err != nil {
+				break
+			}
+			switch rh.Type {
+			case dnsmessage.TypeA, dnsmessage.TypeAAAA:
+				addterr = true
+			case dnsmessage.TypeOPT:
+				if ns.stype == foreign {
+					if dnssec == rh.DNSSECAllowed() {
+						dnssecerr = false
+					} else {
+						dnssecerr = true
+					}
 				}
 			}
+			p.SkipAdditional()
 		}
-		if !dnssecerr && !geoerr && !typeerr && !toofast && !blacklisted &&
+		if *verbose {
+			if addterr {
+				addtag(bufs, " ADDTERR")
+			}
+			if dnssecerr {
+				addtag(bufs, " DNSSECERR")
+			}
+		}
+		if !dnssecerr && !geoerr && !typeerr && !addterr && !toofast && !blacklisted &&
 			(h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeA && hasa ||
 				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hascname || hasauth) ||
 				h.RCode == dnsmessage.RCodeSuccess && qtype != dnsmessage.TypeA && qtype != dnsmessage.TypeAAAA ||
