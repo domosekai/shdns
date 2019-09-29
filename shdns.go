@@ -343,9 +343,9 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			continue
 		}
 		p.SkipAllQuestions()
-		var geoerr, typeerr, hascname, hasa, hasaaaa, blacklisted, hasauth, dnssecerr, addterr bool
+		var geoerr, typeerr, hascname, hasa, hasaaaa, blacklisted, dnssecerr, addterr bool
 		dnssecerr = dnssec && ns.stype == foreign
-		acount := 0
+		ansCount := 0
 		var bufs []bytes.Buffer
 		for {
 			// each loop for one answer
@@ -353,7 +353,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			if err != nil {
 				break
 			}
-			acount++
+			ansCount++
 			var buf bytes.Buffer
 			if *verbose {
 				fmt.Fprintf(&buf, "%d %s Answer[%s]", h.ID, ns.udpaddr, ah.Type.String()[4:])
@@ -437,6 +437,9 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 					p.SkipAnswer()
 				}
 			default:
+				if *verbose {
+					fmt.Fprintf(&buf, " %s len %d %dms", ah.Name.String(), len(a), rtt.Nanoseconds()/1000000)
+				}
 				p.SkipAnswer()
 			}
 			if *verbose {
@@ -446,15 +449,22 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 				bufs = append(bufs, buf)
 			}
 		} // answer section parsed
-		if _, err := p.Authority(); err == nil {
-			hasauth = true
-			p.SkipAllAuthorities()
+		if *verbose && ansCount == 0 {
+			var buf bytes.Buffer
+			fmt.Fprintf(&buf, "%d %s Answer[Empty] len %d %dms", h.ID, ns.udpaddr, len(a), rtt.Nanoseconds()/1000000)
+			bufs = append(bufs, buf)
 		}
+		authCount := 0
+		if aus, err := p.AllAuthorities(); err == nil {
+			authCount = len(aus)
+		}
+		addtCount := 0
 		for {
 			rh, err := p.AdditionalHeader()
 			if err != nil {
 				break
 			}
+			addtCount++
 			switch rh.Type {
 			case dnsmessage.TypeA, dnsmessage.TypeAAAA:
 				addterr = true
@@ -476,10 +486,14 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			if dnssecerr {
 				addtag(bufs, " DNSSECERR")
 			}
+			if h.RCode != dnsmessage.RCodeSuccess {
+				addtag(bufs, " "+h.RCode.String())
+			}
+			addtag(bufs, " "+strconv.Itoa(ansCount)+"/"+strconv.Itoa(authCount)+"/"+strconv.Itoa(addtCount))
 		}
 		if !dnssecerr && !geoerr && !typeerr && !addterr && !toofast && !blacklisted &&
 			(h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeA && hasa ||
-				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hascname || hasauth) ||
+				h.RCode == dnsmessage.RCodeSuccess && qtype == dnsmessage.TypeAAAA && (hasaaaa || hascname || authCount > 0) ||
 				h.RCode == dnsmessage.RCodeSuccess && qtype != dnsmessage.TypeA && qtype != dnsmessage.TypeAAAA ||
 				h.RCode == dnsmessage.RCodeNameError) {
 			switch ns.stype {
@@ -498,7 +512,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 			case foreign:
 				if pcount == 1 {
 					if qtype != dnsmessage.TypeA && qtype != dnsmessage.TypeAAAA ||
-						rtt > time.Duration(*minsafe)*time.Millisecond || hascname || acount > 1 {
+						rtt > time.Duration(*minsafe)*time.Millisecond || hascname || ansCount > 1 {
 						if *trusted && rtt < time.Duration(*minwait)*time.Millisecond {
 							time.Sleep(time.Duration(*minwait)*time.Millisecond - rtt)
 							if *verbose {
@@ -518,7 +532,7 @@ func parseanswer(ns nameserver, senttime time.Time, recvch <-chan []byte, ch, ch
 						chsave <- a
 					}
 				} else {
-					if rtt-firstrtt > time.Duration(*maxdur)*time.Millisecond || hascname || acount > 1 {
+					if rtt-firstrtt > time.Duration(*maxdur)*time.Millisecond || hascname || ansCount > 1 {
 						if !answered {
 							ch <- a
 							answered = true
