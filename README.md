@@ -74,9 +74,9 @@ I very much appreciate the simple idea behind ChinaDNS and believe many function
 Parameters
 ----
     -M int
-        Maximum delay (ms) allowed for subsequent replies since the first. Use a larger value for DOH. (default 500)
+        Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH. (default 500)
     -T int
-        Timeout (s) for the first reply. (default 5)
+        Timeout (s) for the first reply from any server. Use a larger value for high latency network. (default 5)
     -V  Show version
     -b string
         Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
