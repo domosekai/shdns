@@ -36,6 +36,7 @@ var localnet = flag.String("b", "localhost:5353", "Local binding address and UDP
 var dservers = flag.String("d", "114.114.114.114:53,223.5.5.5:53", "Domestic nameservers. Use format [IP]:port for IPv6.")
 var fservers = flag.String("f", "8.8.8.8:53,1.1.1.1:53", "Foreign nameservers. Use format [IP]:port for IPv6.")
 var trusted = flag.Bool("t", false, "Trustworthy mode. Foreign answers will not be checked for validity.")
+var fast = flag.Bool("F", false, "Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.")
 var ipnet4file = flag.String("l4", "", "Domestic IPv4 list file (one IP/CIDR each line) (Required)")
 var ipnet6file = flag.String("l6", "", "Domestic IPv6 list file (one IP/CIDR each line)")
 var blacklist4file = flag.String("k4", "", "IPv4 blacklist file for all nameservers (one IP/CIDR each line)")
@@ -44,7 +45,7 @@ var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameserver
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted.")
 var minwait = flag.Int("w", 50, "Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized.")
 var initimeout = flag.Int("T", 5, "Timeout (s) for the first reply from any server. Use a larger value for high latency network.")
-var subtimeout = flag.Int("M", 500, "Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH.")
+var subtimeout = flag.Int("M", 1000, "Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH.")
 var maxdur = flag.Int("i", 50, "Maximum interval between spoofed answers (ms)")
 var verbose = flag.Bool("v", false, "Verbose mode. Connection will remain open after replied until timeout.")
 var showver = flag.Bool("V", false, "Show version")
@@ -376,9 +377,8 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
 					}
-					if cnIPNet4 != nil {
-						isCN := findIPInNet(ip, cnIPNet4)
-						if ns.sType == domestic && !isCN {
+					if ns.sType == domestic && cnIPNet4 != nil {
+						if !findIPInNet(ip, cnIPNet4) {
 							geoErr = true
 							if *verbose {
 								fmt.Fprint(&buf, " GEOERR")
@@ -410,9 +410,8 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
 					}
-					if cnIPNet6 != nil {
-						isCN := findIPInNet(ip, cnIPNet6)
-						if ns.sType == domestic && !isCN {
+					if ns.sType == domestic && cnIPNet6 != nil {
+						if !findIPInNet(ip, cnIPNet6) {
 							geoErr = true
 							if *verbose {
 								fmt.Fprint(&buf, " GEOERR")
@@ -504,7 +503,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			}
 			addTag(bufs, " "+strconv.Itoa(ansCount)+"/"+strconv.Itoa(authCount)+"/"+strconv.Itoa(addtCount))
 		}
-		if !dnssecErr && !geoErr && !typeErr && !optErr && !tooFast && !inBlacklist &&
+		if !dnssecErr && (!geoErr || *fast && ansCount > 1) && !typeErr && !optErr && !tooFast && !inBlacklist &&
 			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && hasA ||
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || hasCNAME || authCount > 0) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||

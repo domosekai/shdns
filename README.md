@@ -73,8 +73,9 @@ I very much appreciate the simple idea behind ChinaDNS and believe many function
 
 Parameters
 ----
+    -F  Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.
     -M int
-        Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH. (default 500)
+        Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH. (default 1000)
     -T int
         Timeout (s) for the first reply from any server. Use a larger value for high latency network. (default 5)
     -V  Show version
