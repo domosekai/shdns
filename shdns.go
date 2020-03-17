@@ -204,7 +204,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	if *verbose {
 		for _, q := range qs {
 			var buf bytes.Buffer
-			fmt.Fprintf(&buf, "%d %s Query[%s] %s len %d", h.ID, addr, q.Type.String()[4:], q.Name.String(), len(payload))
+			fmt.Fprintf(&buf, "%d %s Query[%s] %s len %d", h.ID, addr, strings.TrimPrefix(q.Type.String(), "Type"), q.Name.String(), len(payload))
 			bufs = append(bufs, buf)
 		}
 	}
@@ -293,7 +293,7 @@ func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- 
 	outConn.SetReadDeadline(sentTime.Add(time.Duration(*initimeout) * time.Second))
 	received := false
 	for {
-		payload := make([]byte, 1500)
+		payload := make([]byte, 5000)
 		n, addr, err := outConn.ReadFromUDP(payload)
 		if err != nil {
 			return
@@ -348,7 +348,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 		ansCount := 0
 		var bufs []bytes.Buffer
 		for {
-			// each loop for one answer
+			// each loop parses one answer from a reply packet
 			ah, err := p.AnswerHeader()
 			if err != nil {
 				break
@@ -356,7 +356,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			ansCount++
 			var buf bytes.Buffer
 			if *verbose {
-				fmt.Fprintf(&buf, "%d %s Answer[%s]", h.ID, ns.udpAddr, ah.Type.String()[4:])
+				fmt.Fprintf(&buf, "%d %s Answer[%s]", h.ID, ns.udpAddr, strings.TrimPrefix(ah.Type.String(), "Type"))
 			}
 			switch ah.Type {
 			case dnsmessage.TypeA:
@@ -469,7 +469,8 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			case dnsmessage.TypeA, dnsmessage.TypeAAAA:
 				addtErr = true
 			case dnsmessage.TypeOPT:
-				if ns.sType == foreign {
+				// ISP nameservers most likely cannot hold DNSSEC query
+				if ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA {
 					if dnssec == rh.DNSSECAllowed() {
 						dnssecErr = false
 					} else {
