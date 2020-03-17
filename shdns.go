@@ -211,17 +211,24 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	p.SkipAllAnswers()
 	p.SkipAllAuthorities()
 	dnssec := false
+	hasOPT := false
 	for {
 		rh, err := p.AdditionalHeader()
 		if err != nil {
 			break
 		}
-		if rh.Type == dnsmessage.TypeOPT && rh.DNSSECAllowed() {
-			dnssec = true
+		if rh.Type == dnsmessage.TypeOPT {
+			hasOPT = true
+			if rh.DNSSECAllowed() {
+				dnssec = true
+			}
 		}
 		p.SkipAdditional()
 	}
 	if *verbose {
+		if hasOPT {
+			addTag(bufs, " OPT")
+		}
 		if dnssec {
 			addTag(bufs, " DNSSEC")
 		}
@@ -238,13 +245,14 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 		return
 	}
 	defer outConn.Close()
-	go forwardQuery(payload, outConn, chAnswer, chSave, qs[0].Type, dnssec)
+	go forwardQuery(payload, outConn, chAnswer, chSave, qs[0].Type, hasOPT, dnssec)
 	answered := false
 	var lastAnswer []byte
 	for {
 		select {
 		case a, ok := <-chAnswer:
 			if ok {
+				// receive answer from goroutines
 				if !answered {
 					if _, err := inConn.WriteToUDP(a, addr); err != nil {
 						errlog.Println(err)
@@ -273,7 +281,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	}
 }
 
-func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- []byte, qType dnsmessage.Type, dnssec bool) {
+func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	defer close(chAnswer)
 	chRecv := make([]chan []byte, len(servers))
 	chDone := make([]chan bool, len(servers))
@@ -284,7 +292,7 @@ func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- 
 		}
 		chRecv[i] = make(chan []byte)
 		chDone[i] = make(chan bool)
-		go parseAnswer(ns, sentTime, chRecv[i], chAnswer, chSave, chDone[i], dnssec, qType)
+		go parseAnswer(ns, sentTime, chRecv[i], chAnswer, chSave, chDone[i], qType, hasOPT, dnssec)
 		defer func(chRecv chan []byte, chDone chan bool) {
 			close(chRecv)
 			<-chDone
@@ -294,6 +302,7 @@ func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- 
 	received := false
 	for {
 		payload := make([]byte, 5000)
+		// receive from nameserver
 		n, addr, err := outConn.ReadFromUDP(payload)
 		if err != nil {
 			return
@@ -302,6 +311,7 @@ func forwardQuery(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- 
 			received = true
 			outConn.SetReadDeadline(time.Now().Add(time.Duration(*subtimeout) * time.Millisecond))
 		}
+		// forward to each goroutine
 		if i, ok := lookupServer(addr); ok {
 			chRecv[i] <- payload[:n]
 		}
@@ -317,7 +327,7 @@ func lookupServer(addr *net.UDPAddr) (int, bool) {
 	return 0, false
 }
 
-func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnswer, chSave chan<- []byte, chDone chan<- bool, dnssec bool, qType dnsmessage.Type) {
+func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnswer, chSave chan<- []byte, chDone chan<- bool, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	pktCount := 0
 	var firstRTT time.Duration
 	answered := false
@@ -343,8 +353,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			continue
 		}
 		p.SkipAllQuestions()
-		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, addtErr bool
-		dnssecErr = dnssec && ns.sType == foreign
+		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr bool
 		ansCount := 0
 		var bufs []bytes.Buffer
 		for {
@@ -459,6 +468,8 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			authCount = len(aus)
 		}
 		addtCount := 0
+		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
+		optErr = hasOPT
 		for {
 			rh, err := p.AdditionalHeader()
 			if err != nil {
@@ -467,8 +478,9 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			addtCount++
 			switch rh.Type {
 			case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-				addtErr = true
+				optErr = true
 			case dnsmessage.TypeOPT:
+				optErr = false
 				// ISP nameservers most likely cannot hold DNSSEC query
 				if ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA {
 					if dnssec == rh.DNSSECAllowed() {
@@ -481,8 +493,8 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			p.SkipAdditional()
 		}
 		if *verbose {
-			if addtErr {
-				addTag(bufs, " ADDTERR")
+			if optErr {
+				addTag(bufs, " OPTERR")
 			}
 			if dnssecErr {
 				addTag(bufs, " DNSSECERR")
@@ -492,7 +504,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			}
 			addTag(bufs, " "+strconv.Itoa(ansCount)+"/"+strconv.Itoa(authCount)+"/"+strconv.Itoa(addtCount))
 		}
-		if !dnssecErr && !geoErr && !typeErr && !addtErr && !tooFast && !inBlacklist &&
+		if !dnssecErr && !geoErr && !typeErr && !optErr && !tooFast && !inBlacklist &&
 			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && hasA ||
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || hasCNAME || authCount > 0) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
@@ -513,12 +525,13 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 				}
 			case foreign:
 				if pktCount == 1 {
+					// first reply from this server
 					if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
 						rtt > time.Duration(*minsafe)*time.Millisecond || hasCNAME || ansCount > 1 {
 						if *trusted && rtt < time.Duration(*minwait)*time.Millisecond {
 							time.Sleep(time.Duration(*minwait)*time.Millisecond - rtt)
 							if *verbose {
-								addTag(bufs, " [DELAYED]")
+								addTag(bufs, " [WAIT FOR DOMESTIC]")
 							}
 						} else {
 							if *verbose {
@@ -528,10 +541,12 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 						chAnswer <- a
 						answered = true
 					} else {
+						time.Sleep(time.Duration(*minsafe)*time.Millisecond - rtt)
 						if *verbose {
-							addTag(bufs, " [SAVE]")
+							addTag(bufs, " [WAIT UNTIL SAFE]")
 						}
-						chSave <- a
+						chAnswer <- a
+						answered = true
 					}
 				} else {
 					if rtt-firstRTT > time.Duration(*maxdur)*time.Millisecond || hasCNAME || ansCount > 1 {
