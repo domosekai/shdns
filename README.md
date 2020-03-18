@@ -75,18 +75,14 @@ Parameters
 ----
     -F  Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.
     -M int
-        Maximum delay (ms) allowed for subsequent replies from all servers. Use a larger value for DOH. (default 1000)
-    -T int
-        Timeout (s) for the first reply from any server. Use a larger value for high latency network. (default 5)
+        DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS. (default 1000)
     -V  Show version
     -b string
         Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
     -d string
-        Domestic nameservers. Use format [IP]:port for IPv6. (default "114.114.114.114:53,223.5.5.5:53")
+        Domestic nameservers. Default port 53. Use format [IP]:port for IPv6. (default "114.114.114.114,223.5.5.5")
     -f string
-        Foreign nameservers. Use format [IP]:port for IPv6. (default "8.8.8.8:53,1.1.1.1:53")
-    -i int
-        Maximum interval between spoofed answers (ms) (default 50)
+        Foreign nameservers. Default port 53. Use format [IP]:port for IPv6. (default "8.8.8.8,8.8.4.4")
     -k4 string
         IPv4 blacklist file for all nameservers (one IP/CIDR each line)
     -k6 string
@@ -98,27 +94,28 @@ Parameters
     -m int
         Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped. (default 30)
     -s int
-        Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be accepted. (default 100)
+        Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. 
+        Packets with shorter RTT will be delayed until this threshold. (default 100)
     -t  Trustworthy mode. Foreign answers will not be checked for validity.
     -v  Verbose mode. Connection will remain open after replied until timeout.
     -w int
-        Only for trustworthy foreign servers. Time (ms) during which domestic answers are prioritized. (default 50)
+        Only for trustworthy mode. Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver. (default 50)
         
 Usage examples
 ----
 
 * Scenario 1: Home broadband
 
-      shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -m 30 -M 400 -s 100 -i 50
+      shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -m 30 -M 1000 -s 100
     This scenario has no trustworthy servers and users are HIGHLY RECOMMENDED to tweak the parameters by analyzing the verbose output. 
     
     **Do not use the parameters as is!**
 
-    Hint: For those users who want to replicate ChinaDNS's behavior (no minimum RTT and safe RTT checks, always wait until the end of the delay), set `-m` to `0`, `-s` and `-i` equal to or larger than `-M`. (`-M` is similar to `-y` in ChinaDNS, default is 300)
+    Hint: For those users who want to replicate ChinaDNS's behavior (no minimum RTT and safe RTT checks, always wait until the end of the delay), set `-m` to `0`, `-s` equal to the delay (i.e. `-y` in ChinaDNS, default is 300).
 
     Sample output:
         
-      $ shdns -b 127.0.0.1:5300 -l4 cnipv4.txt -l6 cnipv6.txt -m 30 -M 400 -s 100 -i 50 -v
+      $ shdns -b 127.0.0.1:5300 -l4 cnipv4.txt -l6 cnipv6.txt -m 30 -M 400 -s 100 -v
       2019/08/26 23:02:30.320622 Loaded 8394 domestic IPv4 entries
       2019/08/26 23:02:30.323830 Loaded 1753 domestic IPv6 entries
       2019/08/26 23:02:30.324422 Using nameserver 114.114.114.114:53
@@ -166,11 +163,11 @@ Usage examples
 * Scenario 2: Home broadband + Trustworthy DNS over UDP or VPN
 
       shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 400 -w 50 -t -f 208.67.222.222:443
-    This scenario has non-local trustworthy foreign servers so that RTT checks are disabled. Instead, a duration (50ms) is set so that answers returned by foreign servers within 50ms (not very likely) are delayed until 50ms. This policy addresses domestic CDN issue.
+    This scenario has non-local trustworthy foreign servers so that RTT checks are disabled. Instead, a duration (50ms) is set so that answers returned by foreign servers within 50ms (not very likely) are delayed until 50ms. This policy addresses the domestic CDN issue.
     
-* Scenario 3: Home broadband + Trustworthy local caching DNS proxy (e.g. DOH)
+* Scenario 3: Home broadband + Trustworthy local caching DNS proxy (e.g. dnscrypt)
 
-      shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 2000 -w 50 -t -f 127.0.0.1:5300
+      shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 3000 -w 50 -t -f 127.0.0.1:5300
     This is very similar to scenario 2. The only difference is that here a local caching server is set as the foreign server. A large value is used for timeout due to the time-consuming TLS handshake and `-w` is critical to be domestic CDN-friendly.
 
 Compilation
