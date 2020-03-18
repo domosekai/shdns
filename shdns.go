@@ -463,8 +463,12 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			bufs = append(bufs, buf)
 		}
 		authCount := 0
-		if aus, err := p.AllAuthorities(); err == nil {
-			authCount = len(aus)
+		for {
+			if _, err := p.AuthorityHeader(); err != nil {
+				break
+			}
+			authCount++
+			p.SkipAuthority()
 		}
 		addtCount := 0
 		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
