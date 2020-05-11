@@ -504,7 +504,7 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			addTag(bufs, " "+strconv.Itoa(ansCount)+"/"+strconv.Itoa(authCount)+"/"+strconv.Itoa(addtCount))
 		}
 		if !dnssecErr && (!geoErr || *fast && ansCount > 1) && !typeErr && !optErr && !tooFast && !inBlacklist &&
-			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && hasA ||
+			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && (hasA || hasCNAME || authCount > 0) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || hasCNAME || authCount > 0) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
 				h.RCode == dnsmessage.RCodeNameError) ||
