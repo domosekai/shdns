@@ -22,7 +22,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"golang.org/x/net/dns/dnsmessage"
 	"log"
 	"net"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 var localnet = flag.String("b", "localhost:5353", "Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353)")
@@ -43,7 +44,7 @@ var blacklist4file = flag.String("k4", "", "IPv4 blacklist file for all nameserv
 var blacklist6file = flag.String("k6", "", "IPv6 blacklist file for all nameservers (one IP/CIDR each line)")
 var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped.")
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. Packets with shorter RTT will be delayed until this threshold.")
-var minwait = flag.Int("w", 50, "Only for trustworthy mode. Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver.")
+var minwait = flag.Int("w", 50, "Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver.")
 var timeout = flag.Int("M", 1000, "DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS.")
 var verbose = flag.Bool("v", false, "Verbose mode. Connection will remain open after replied until timeout.")
 var showver = flag.Bool("V", false, "Show version")
@@ -59,6 +60,11 @@ const (
 
 type nameserver struct {
 	udpAddr *net.UDPAddr
+	sType   serverType
+}
+
+type answer struct {
+	payload []byte
 	sType   serverType
 }
 
@@ -235,7 +241,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 			logger.Println(&buf)
 		}
 	}
-	chAnswer := make(chan []byte)
+	chAnswer := make(chan answer)
 	chSave := make(chan []byte)
 	loc, _ := net.ResolveUDPAddr("udp", "")
 	outConn, err := net.ListenUDP("udp", loc)
@@ -246,98 +252,113 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	defer outConn.Close()
 	go forwardQueryAndReply(payload, outConn, chAnswer, chSave, qs[0].Type, hasOPT, dnssec)
 	answered := false
-	var lastAnswer []byte
-	timer := time.NewTimer(time.Duration(*minsafe) * time.Millisecond)
+	waiting := true
+	var savedAnswer, waitedAnswer []byte
+	timerSafe := time.NewTimer(time.Duration(*minsafe) * time.Millisecond)
+	timerWait := time.NewTimer(time.Duration(*minwait) * time.Millisecond)
 	for {
 		select {
 		case a, ok := <-chAnswer:
 			if ok {
 				if !answered {
-					if _, err := inConn.WriteToUDP(a, addr); err != nil {
-						errlog.Println(err)
-					}
-					answered = true
-					if !*verbose {
-						// do not use return here because other goroutines may still write to chAnswer
-						outConn.Close()
+					if a.sType == domestic && a.payload == nil {
+						waiting = false
+						if waitedAnswer != nil {
+							if _, err := inConn.WriteToUDP(waitedAnswer, addr); err != nil {
+								errlog.Println(err)
+							}
+							answered = true
+							if !*verbose {
+								// do not use return here because goroutine may still write to chAnswer
+								outConn.Close()
+							}
+						}
+					} else if a.sType == domestic || !waiting {
+						if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
+							errlog.Println(err)
+						}
+						answered = true
+						if !*verbose {
+							// do not use return here because goroutine may still write to chAnswer
+							outConn.Close()
+						}
+					} else if waitedAnswer == nil {
+						waitedAnswer = a.payload
 					}
 				}
 			} else {
 				if *verbose {
 					logger.Printf("%d Connection closed", h.ID)
 				}
-				// now chAnswer is already closed
+				// chAnswer is closed
 				return
 			}
-		case <-timer.C:
-			if !answered && lastAnswer != nil {
-				if _, err := inConn.WriteToUDP(lastAnswer, addr); err != nil {
+		case <-timerWait.C:
+			waiting = false
+			if !answered && waitedAnswer != nil {
+				if _, err := inConn.WriteToUDP(waitedAnswer, addr); err != nil {
 					errlog.Println(err)
 				}
+				answered = true
 				if !*verbose {
-					// do not use return here because other goroutines may still write to chAnswer
+					// do not use return here because goroutine may still write to chAnswer
+					outConn.Close()
+				}
+			}
+		case <-timerSafe.C:
+			if !answered && savedAnswer != nil {
+				if _, err := inConn.WriteToUDP(savedAnswer, addr); err != nil {
+					errlog.Println(err)
+				}
+				answered = true
+				if !*verbose {
+					// do not use return here because goroutine may still write to chAnswer
 					outConn.Close()
 				}
 			}
 		case a := <-chSave:
 			if !answered {
-				lastAnswer = a
+				savedAnswer = a
 			}
 		}
 	}
 }
 
-func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
+func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer chan<- answer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	defer close(chAnswer)
-	chRecv := make([]chan []byte, len(servers))
-	chDone := make([]chan bool, len(servers))
 	sentTime := time.Now()
-	for i, ns := range servers {
-		if _, err := outConn.WriteToUDP(payload, ns.udpAddr); err != nil {
-			continue
-		}
-		chRecv[i] = make(chan []byte)
-		chDone[i] = make(chan bool)
-		go parseAnswer(ns, sentTime, chRecv[i], chAnswer, chSave, chDone[i], qType, hasOPT, dnssec)
-		defer func(chRecv chan []byte, chDone chan bool) {
-			// send done signal to goroutines
-			close(chRecv)
-			// wait for goroutines to signal done, so that chAnswer can be safely closed
-			<-chDone
-		}(chRecv[i], chDone[i])
+	for _, ns := range servers {
+		outConn.WriteToUDP(payload, ns.udpAddr)
 	}
 	outConn.SetReadDeadline(sentTime.Add(time.Duration(*timeout) * time.Millisecond))
+	parseAnswers(outConn, sentTime, chAnswer, chSave, qType, hasOPT, dnssec)
+}
+
+func lookupServer(addr *net.UDPAddr) (nameserver, bool) {
+	for _, s := range servers {
+		if s.udpAddr.IP.Equal(addr.IP) && s.udpAddr.Port == addr.Port && s.udpAddr.Zone == addr.Zone {
+			return s, true
+		}
+	}
+	return nameserver{}, false
+}
+
+func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	for {
 		var payload [5000]byte
 		// receive from nameserver
-		n, addr, err := outConn.ReadFromUDP(payload[:])
+		n, addr, err := conn.ReadFromUDP(payload[:])
 		if err != nil {
-			// out connection either timeout or closed, defer func will be called
+			// out connection either timeout or closed
 			return
 		}
-		// forward to each goroutine
-		if i, ok := lookupServer(addr); ok {
-			chRecv[i] <- payload[:n]
-		}
-	}
-}
-
-func lookupServer(addr *net.UDPAddr) (int, bool) {
-	for i, s := range servers {
-		if s.udpAddr.IP.Equal(addr.IP) && s.udpAddr.Port == addr.Port && s.udpAddr.Zone == addr.Zone {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
-func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnswer, chSave chan<- []byte, chDone chan<- bool, qType dnsmessage.Type, hasOPT, dnssec bool) {
-	for {
-		a, ok := <-chRecv
+		// match nameserver
+		ns, ok := lookupServer(addr)
 		if !ok {
-			chDone <- true
-			return // receive channel closed
+			continue
 		}
+		// start parsing
+		a := payload[:n]
 		rtt := time.Since(sentTime)
 		tooFast := false
 		if ns.sType == foreign && rtt < time.Duration(*minrtt)*time.Millisecond {
@@ -511,32 +532,29 @@ func parseAnswer(ns nameserver, sentTime time.Time, chRecv <-chan []byte, chAnsw
 			ns.sType == foreign && *trusted {
 			switch ns.sType {
 			case domestic:
-				chAnswer <- a
 				if *verbose {
 					addTag(bufs, " [ACCEPT]")
 				}
+				chAnswer <- answer{a, domestic}
 			case foreign:
 				if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
 					rtt > time.Duration(*minsafe)*time.Millisecond || hasCNAME || ansCount > 1 {
-					if *trusted && rtt < time.Duration(*minwait)*time.Millisecond {
-						time.Sleep(time.Duration(*minwait)*time.Millisecond - rtt)
-						if *verbose {
-							addTag(bufs, " [WAIT FOR DOMESTIC]")
-						}
-					} else {
-						if *verbose {
-							addTag(bufs, " [ACCEPT]")
-						}
+					if *verbose {
+						addTag(bufs, " [ACCEPT]")
 					}
-					chAnswer <- a
+					chAnswer <- answer{a, foreign}
 				} else {
 					if *verbose {
-						addTag(bufs, " [WAIT UNTIL SAFE]")
+						addTag(bufs, " [SAVE]")
 					}
 					chSave <- a
 				}
 			}
 		} else {
+			// send empty answer to signal that domestic has replied
+			if ns.sType == domestic {
+				chAnswer <- answer{nil, domestic}
+			}
 			if *verbose {
 				addTag(bufs, " [DROP]")
 			}
