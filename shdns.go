@@ -44,7 +44,7 @@ var blacklist4file = flag.String("k4", "", "IPv4 blacklist file for all nameserv
 var blacklist6file = flag.String("k6", "", "IPv6 blacklist file for all nameservers (one IP/CIDR each line)")
 var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped.")
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. Packets with shorter RTT will be delayed until this threshold.")
-var minwait = flag.Int("w", 50, "Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver.")
+var minwait = flag.Int("w", 100, "Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver.")
 var timeout = flag.Int("M", 1000, "DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS.")
 var verbose = flag.Bool("v", false, "Verbose mode. Connection will remain open after replied until timeout.")
 var showver = flag.Bool("V", false, "Show version")
@@ -273,7 +273,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 								outConn.Close()
 							}
 						}
-					} else if a.sType == domestic || !waiting {
+					} else if a.sType == domestic || !waiting || qs[0].Type != dnsmessage.TypeA && qs[0].Type != dnsmessage.TypeAAAA {
 						if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
 							errlog.Println(err)
 						}
@@ -524,12 +524,11 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			}
 			addTag(bufs, " "+strconv.Itoa(ansCount)+"/"+strconv.Itoa(authCount)+"/"+strconv.Itoa(addtCount))
 		}
-		if !dnssecErr && (!geoErr || *fast && ansCount > 1) && !typeErr && !optErr && !tooFast && !inBlacklist &&
+		if ns.sType == foreign && *trusted || !dnssecErr && (!geoErr || *fast && ansCount > 1) && !typeErr && !optErr && !tooFast && !inBlacklist &&
 			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && (hasA || ns.sType == foreign && (hasCNAME || authCount > 0)) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || ns.sType == foreign && (hasCNAME || authCount > 0)) ||
-				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
-				h.RCode == dnsmessage.RCodeNameError) ||
-			ns.sType == foreign && *trusted {
+				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && ns.sType == foreign ||
+				h.RCode == dnsmessage.RCodeNameError) {
 			switch ns.sType {
 			case domestic:
 				if *verbose {
