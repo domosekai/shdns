@@ -73,34 +73,33 @@ I very much appreciate the simple idea behind ChinaDNS and believe many function
 
 Parameters
 ----
-    -F  Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.
+    -F    Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.
     -M int
-        DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS. (default 1000)
-    -V  Show version
+          DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS. (default 1000)
+    -V    Show version
     -b string
-        Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
+          Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
     -d string
-        Domestic nameservers. Default port 53. Use format [IP]:port for IPv6. (default "114.114.114.114,223.5.5.5")
+          Domestic nameservers. Default port 53. Use format [IP]:port for IPv6. (default "114.114.114.114,223.5.5.5")
     -f string
-        Foreign nameservers. Default port 53. Use format [IP]:port for IPv6. (default "8.8.8.8,8.8.4.4")
+          Foreign nameservers. Default port 53. Use format [IP]:port for IPv6. (default "8.8.8.8,8.8.4.4")
     -k4 string
-        IPv4 blacklist file for all nameservers (one IP/CIDR each line)
+          IPv4 blacklist file for all nameservers (one IP/CIDR each line)
     -k6 string
-        IPv6 blacklist file for all nameservers (one IP/CIDR each line)
+          IPv6 blacklist file for all nameservers (one IP/CIDR each line)
     -l4 string
-        Domestic IPv4 list file (one IP/CIDR each line) (Required)
+          Domestic IPv4 list file (one IP/CIDR each line) (Required)
     -l6 string
-        Domestic IPv6 list file (one IP/CIDR each line)
+          Domestic IPv6 list file (one IP/CIDR each line)
     -m int
-        Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped. (default 30)
+          Minimum possible RTT (ms) for foreign nameservers. Packets with shorter RTT will be dropped. (default 30)
     -s int
-        Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. 
-        Packets with shorter RTT will be delayed until this threshold. (default 100)
-    -t  Trustworthy mode. Foreign answers will not be checked for validity.
-    -v  Verbose mode. Connection will remain open after replied until timeout.
+          Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. Packets with shorter RTT will be delayed until this threshold. (default 100)
+    -t    Trustworthy mode. Foreign answers will not be checked for validity.
+    -v    Verbose mode. Connection will remain open after replied until timeout.
     -w int
-        Only for trustworthy mode. Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver. (default 50)
-        
+          Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver. (default 100)
+
 Usage examples
 ----
 
