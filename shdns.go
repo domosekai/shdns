@@ -489,7 +489,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 		}
 		addtCount := 0
 		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
-		optErr = hasOPT
+		optErr = hasOPT && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
 		for {
 			rh, err := p.AdditionalHeader()
 			if err != nil {
