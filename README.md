@@ -172,7 +172,7 @@ Usage examples
 Compilation
 ----
 
-  The only external package used is dnsmessage. You may need to run `go get -u golang.org/x/net/dns/dnsmessage` to get its source first. Build is straightforward.
+  shdns relies on a modified version of golang.org/x/net/dns/dnsmessage. You may need to run `go get -u github.com/domosekai/net/dns/dnsmessage` to get its source first. Build is straightforward.
 
 [ChinaDNS]: https://github.com/shadowsocks/ChinaDNS
 [overture]: https://github.com/shawn1m/overture

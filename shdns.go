@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/dns/dnsmessage"
+	"github.com/domosekai/net/dns/dnsmessage"
 )
 
 var localnet = flag.String("b", "localhost:5353", "Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353)")
@@ -460,6 +460,42 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), r.PTR, len(a), rtt.Nanoseconds()/1000000)
 				} else {
 					p.SkipAnswer()
+				}
+			case dnsmessage.TypeTXT:
+				if *verbose {
+					r, _ := p.TXTResource()
+					fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), r.TXT, len(a), rtt.Nanoseconds()/1000000)
+				} else {
+					p.SkipAnswer()
+				}
+			case dnsmessage.TypeSRV:
+				if *verbose {
+					r, _ := p.SRVResource()
+					fmt.Fprintf(&buf, " %s %d %d %d %s len %d %dms", ah.Name.String(), r.Priority, r.Weight, r.Port, r.Target, len(a), rtt.Nanoseconds()/1000000)
+				} else {
+					p.SkipAnswer()
+				}
+			case dnsmessage.TypeHTTPS:
+				r, _ := p.HTTPSResource()
+				if *verbose {
+					fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
+					if r.ALPN != nil {
+						fmt.Fprintf(&buf, " alpn %s", r.ALPN)
+					}
+					if r.Port != 0 {
+						fmt.Fprintf(&buf, " port %d", r.Port)
+					}
+					if r.IPv4Hint != nil {
+						for i := range r.IPv4Hint {
+							fmt.Fprintf(&buf, " %s", net.IP(r.IPv4Hint[i][:]).String())
+						}
+					}
+					if r.IPv6Hint != nil {
+						for i := range r.IPv6Hint {
+							fmt.Fprintf(&buf, " %s", net.IP(r.IPv6Hint[i][:]).String())
+						}
+					}
+					fmt.Fprintf(&buf, " len %d %dms", len(a), rtt.Nanoseconds()/1000000)
 				}
 			default:
 				if *verbose {
