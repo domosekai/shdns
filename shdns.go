@@ -565,7 +565,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || ns.sType == foreign) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && ns.sType == foreign ||
 				h.RCode == dnsmessage.RCodeServerFailure && ns.sType == foreign ||
-				h.RCode == dnsmessage.RCodeNameError) {
+				h.RCode == dnsmessage.RCodeNameError && ns.sType == foreign) {
 			switch ns.sType {
 			case domestic:
 				if *verbose {
