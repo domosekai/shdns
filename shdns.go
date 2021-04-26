@@ -1,5 +1,5 @@
 /*	shdns, a port of ChinaDNS in go with IPv6 support
-	Copyright (C) 2019 domosekai
+	Copyright (C) 2019–2021 domosekai
 
 	This program is free software: you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -268,29 +268,21 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 								errlog.Println(err)
 							}
 							answered = true
-							if !*verbose {
-								// do not use return here because goroutine may still write to chAnswer
-								outConn.Close()
-							}
 						}
 					} else if a.sType == domestic || !waiting || qs[0].Type != dnsmessage.TypeA && qs[0].Type != dnsmessage.TypeAAAA {
 						if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
 							errlog.Println(err)
 						}
 						answered = true
-						if !*verbose {
-							// do not use return here because goroutine may still write to chAnswer
-							outConn.Close()
-						}
 					} else if waitedAnswer == nil {
 						waitedAnswer = a.payload
 					}
 				}
 			} else {
+				// chAnswer is closed
 				if *verbose {
 					logger.Printf("%d Connection closed", h.ID)
 				}
-				// chAnswer is closed
 				return
 			}
 		case <-timerWait.C:
@@ -300,10 +292,6 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 					errlog.Println(err)
 				}
 				answered = true
-				if !*verbose {
-					// do not use return here because goroutine may still write to chAnswer
-					outConn.Close()
-				}
 			}
 		case <-timerSafe.C:
 			if !answered && savedAnswer != nil {
@@ -311,10 +299,6 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 					errlog.Println(err)
 				}
 				answered = true
-				if !*verbose {
-					// do not use return here because goroutine may still write to chAnswer
-					outConn.Close()
-				}
 			}
 		case a := <-chSave:
 			if !answered {
