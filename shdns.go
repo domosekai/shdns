@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/domosekai/net/dns/dnsmessage"
+	"shdns/dnsmessage"
 )
 
 var localnet = flag.String("b", "localhost:5353", "Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353)")
