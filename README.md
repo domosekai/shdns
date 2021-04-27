@@ -75,7 +75,7 @@ Parameters
 ----
     -F    Fast mode. Accept foreign IP from domestic nameservers if it passes basic checks.
     -M int
-          DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS. (default 1000)
+          DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS. (default 3000)
     -V    Show version
     -b string
           Local binding address and UDP port (e.g. 127.0.0.1:5353 [::1]:5353) (default "localhost:5353")
@@ -169,10 +169,20 @@ Usage examples
       shdns -b 127.0.0.1:5353 -l4 cnipv4.txt -l6 cnipv6.txt -M 3000 -w 50 -t -f 127.0.0.1:5300
     This is very similar to scenario 2. The only difference is that here a local caching server is set as the foreign server. A large value is used for timeout due to the time-consuming TLS handshake and `-w` is critical to be domestic CDN-friendly.
 
-Compilation
+Message truncation
 ----
 
-  shdns relies on a modified version of golang.org/x/net/dns/dnsmessage. You may need to run `go get -u github.com/domosekai/net/dns/dnsmessage` to get its source first. Build is straightforward.
+  Since shdns does not support TCP, it can't properly handle the situation if an UDP response is truncated by the nameserver.
+
+  In order to reduce the possibility of truncation, you are strongly recommended to set payload size at the client side to the EDNS maximum (4096 bytes).
+  It's very unlikely for a DNS message to exceed that size.
+
+  In the case that the client is dnsmasq, this can be done with the option `--edns-packet-max=4096`.
+
+Dependence
+----
+
+  shdns relies on a modified version of golang.org/x/net/dns/dnsmessage.
 
 [ChinaDNS]: https://github.com/shadowsocks/ChinaDNS
 [overture]: https://github.com/shawn1m/overture
