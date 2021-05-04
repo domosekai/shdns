@@ -243,6 +243,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	}
 	chAnswer := make(chan answer)
 	chSave := make(chan []byte)
+	chFail := make(chan []byte)
 	loc, _ := net.ResolveUDPAddr("udp", "")
 	outConn, err := net.ListenUDP("udp", loc)
 	if err != nil {
@@ -250,10 +251,10 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 		return
 	}
 	defer outConn.Close()
-	go forwardQueryAndReply(payload, outConn, chAnswer, chSave, qs[0].Type, hasOPT, dnssec)
+	go forwardQueryAndReply(payload, outConn, chAnswer, chSave, chFail, qs[0].Type, hasOPT, dnssec)
 	answered := false
 	waiting := true
-	var savedAnswer, waitedAnswer []byte
+	var savedAnswer, waitedAnswer, failedAnswer []byte
 	timerSafe := time.NewTimer(time.Duration(*minsafe) * time.Millisecond)
 	timerWait := time.NewTimer(time.Duration(*minwait) * time.Millisecond)
 	for {
@@ -280,6 +281,11 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 				}
 			} else {
 				// chAnswer is closed
+				if !answered && failedAnswer != nil {
+					if _, err := inConn.WriteToUDP(failedAnswer, addr); err != nil {
+						errlog.Println(err)
+					}
+				}
 				if *verbose {
 					logger.Printf("%d Connection closed", h.ID)
 				}
@@ -304,18 +310,22 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 			if !answered {
 				savedAnswer = a
 			}
+		case a := <-chFail:
+			if !answered {
+				failedAnswer = a
+			}
 		}
 	}
 }
 
-func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer chan<- answer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
+func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer chan<- answer, chSave, chFail chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	defer close(chAnswer)
 	sentTime := time.Now()
 	for _, ns := range servers {
 		outConn.WriteToUDP(payload, ns.udpAddr)
 	}
 	outConn.SetReadDeadline(sentTime.Add(time.Duration(*timeout) * time.Millisecond))
-	parseAnswers(outConn, sentTime, chAnswer, chSave, qType, hasOPT, dnssec)
+	parseAnswers(outConn, sentTime, chAnswer, chSave, chFail, qType, hasOPT, dnssec)
 }
 
 func lookupServer(addr *net.UDPAddr) (nameserver, bool) {
@@ -327,7 +337,7 @@ func lookupServer(addr *net.UDPAddr) (nameserver, bool) {
 	return nameserver{}, false
 }
 
-func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer, chSave chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
+func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer, chSave, chFail chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	for {
 		var payload [5000]byte
 		// receive from nameserver
@@ -569,6 +579,11 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					chSave <- a
 				}
 			}
+		} else if h.RCode == dnsmessage.RCodeServerFailure && ns.sType == foreign {
+			if *verbose {
+				addTag(bufs, " [SAVE]")
+			}
+			chFail <- a
 		} else {
 			// send empty answer to signal that domestic has replied
 			if ns.sType == domestic {
