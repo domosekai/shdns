@@ -130,7 +130,6 @@ func parseServers(str string, sType serverType) {
 			}
 		}
 	}
-	return
 }
 
 func parseIPList(filename string, iplen int) (ipnets []net.IPNet) {
@@ -527,8 +526,6 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			}
 			addtCount++
 			switch rh.Type {
-			case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-				optErr = true
 			case dnsmessage.TypeOPT:
 				optErr = false
 				// ISP nameservers most likely cannot hold DNSSEC query
