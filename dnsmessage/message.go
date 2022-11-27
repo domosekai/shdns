@@ -130,14 +130,14 @@ func (o OpCode) GoString() string {
 // An RCode is a DNS response status code.
 type RCode uint16
 
+// Header.RCode values.
 const (
-	// Message.Rcode
-	RCodeSuccess        RCode = 0
-	RCodeFormatError    RCode = 1
-	RCodeServerFailure  RCode = 2
-	RCodeNameError      RCode = 3
-	RCodeNotImplemented RCode = 4
-	RCodeRefused        RCode = 5
+	RCodeSuccess        RCode = 0 // NoError
+	RCodeFormatError    RCode = 1 // FormErr
+	RCodeServerFailure  RCode = 2 // ServFail
+	RCodeNameError      RCode = 3 // NXDomain
+	RCodeNotImplemented RCode = 4 // NotImp
+	RCodeRefused        RCode = 5 // Refused
 )
 
 var rCodeNames = map[RCode]string{
@@ -362,6 +362,8 @@ type Header struct {
 	Truncated          bool
 	RecursionDesired   bool
 	RecursionAvailable bool
+	AuthenticData      bool
+	CheckingDisabled   bool
 	RCode              RCode
 }
 
@@ -382,6 +384,12 @@ func (m *Header) pack() (id uint16, bits uint16) {
 	}
 	if m.Response {
 		bits |= headerBitQR
+	}
+	if m.AuthenticData {
+		bits |= headerBitAD
+	}
+	if m.CheckingDisabled {
+		bits |= headerBitCD
 	}
 	return
 }
@@ -424,6 +432,8 @@ const (
 	headerBitTC = 1 << 9  // truncated
 	headerBitRD = 1 << 8  // recursion desired
 	headerBitRA = 1 << 7  // recursion available
+	headerBitAD = 1 << 5  // authentic data
+	headerBitCD = 1 << 4  // checking disabled
 )
 
 var sectionNames = map[section]string{
@@ -501,6 +511,8 @@ func (h *header) header() Header {
 		Truncated:          (h.bits & headerBitTC) != 0,
 		RecursionDesired:   (h.bits & headerBitRD) != 0,
 		RecursionAvailable: (h.bits & headerBitRA) != 0,
+		AuthenticData:      (h.bits & headerBitAD) != 0,
+		CheckingDisabled:   (h.bits & headerBitCD) != 0,
 		RCode:              RCode(h.bits & 0xF),
 	}
 }
@@ -1236,6 +1248,7 @@ func (m *Message) GoString() string {
 // A Builder allows incrementally packing a DNS message.
 //
 // Example usage:
+//
 //	buf := make([]byte, 2, 514)
 //	b := NewBuilder(buf, Header{...})
 //	b.EnableCompression()
@@ -1270,8 +1283,8 @@ type Builder struct {
 //
 // The DNS message is appended to the provided initial buffer buf (which may be
 // nil) as it is built. The final message is returned by the (*Builder).Finish
-// method, which may return the same underlying array if there was sufficient
-// capacity in the slice.
+// method, which includes buf[:len(buf)] and may return the same underlying
+// array if there was sufficient capacity in the slice.
 func NewBuilder(buf []byte, h Header) Builder {
 	if buf == nil {
 		buf = make([]byte, 0, packStartingCap)
@@ -1800,7 +1813,7 @@ const (
 
 // SetEDNS0 configures h for EDNS(0).
 //
-// The provided extRCode must be an extedned RCode.
+// The provided extRCode must be an extended RCode.
 func (h *ResourceHeader) SetEDNS0(udpPayloadLen int, extRCode RCode, dnssecOK bool) error {
 	h.Name = Name{Data: [nameLen]byte{'.'}, Length: 1} // RFC 6891 section 6.1.2
 	h.Type = TypeOPT
@@ -1967,17 +1980,17 @@ const nameLen = 255
 // A Name is a non-encoded domain name. It is used instead of strings to avoid
 // allocations.
 type Name struct {
-	Data   [nameLen]byte
+	Data   [nameLen]byte // 255 bytes
 	Length uint8
 }
 
 // NewName creates a new Name from a string.
 func NewName(name string) (Name, error) {
-	if len([]byte(name)) > nameLen {
+	if len(name) > nameLen {
 		return Name{}, errCalcLen
 	}
 	n := Name{Length: uint8(len(name))}
-	copy(n.Data[:], []byte(name))
+	copy(n.Data[:], name)
 	return n, nil
 }
 
