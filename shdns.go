@@ -212,8 +212,9 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 			bufs = append(bufs, buf)
 		}
 	}
-	p.SkipAllAnswers()
-	p.SkipAllAuthorities()
+	if p.SkipAllAnswers() != nil || p.SkipAllAuthorities() != nil {
+		return
+	}
 	dnssec := false
 	hasOPT := false
 	for {
@@ -227,7 +228,9 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 				dnssec = true
 			}
 		}
-		p.SkipAdditional()
+		if p.SkipAdditional() != nil {
+			return
+		}
 	}
 	if *verbose {
 		if hasOPT {
@@ -366,8 +369,10 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 		if !h.Response || h.Truncated {
 			continue
 		}
-		p.SkipAllQuestions()
-		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr bool
+		if p.SkipAllQuestions() != nil {
+			continue
+		}
+		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr, invalidResponse bool
 		ansCount := 0
 		var bufs []bytes.Buffer
 		for {
@@ -385,7 +390,11 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			case dnsmessage.TypeA:
 				hasA = true
 				if cnIPNet4 != nil || blackIPs4 != nil || *verbose {
-					r, _ := p.AResource()
+					r, err := p.AResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					ip := net.IP(r.A[:]) //r.A is 4-byte
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
@@ -407,7 +416,10 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 						}
 					}
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 				if qType == dnsmessage.TypeAAAA {
 					typeErr = true
@@ -418,7 +430,11 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			case dnsmessage.TypeAAAA:
 				hasAAAA = true
 				if cnIPNet6 != nil || blackIPs6 != nil || *verbose {
-					r, _ := p.AAAAResource()
+					r, err := p.AAAAResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					ip := net.IP(r.AAAA[:])
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
@@ -440,39 +456,74 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 						}
 					}
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 			case dnsmessage.TypeCNAME:
 				if *verbose {
-					r, _ := p.CNAMEResource()
+					r, err := p.CNAMEResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), r.CNAME, len(a), rtt.Nanoseconds()/1000000)
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 				hasCNAME = true
 			case dnsmessage.TypePTR:
 				if *verbose {
-					r, _ := p.PTRResource()
+					r, err := p.PTRResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), r.PTR, len(a), rtt.Nanoseconds()/1000000)
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 			case dnsmessage.TypeTXT:
 				if *verbose {
-					r, _ := p.TXTResource()
+					r, err := p.TXTResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), r.TXT, len(a), rtt.Nanoseconds()/1000000)
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 			case dnsmessage.TypeSRV:
 				if *verbose {
-					r, _ := p.SRVResource()
+					r, err := p.SRVResource()
+					if err != nil {
+						invalidResponse = true
+						break
+					}
 					fmt.Fprintf(&buf, " %s %d %d %d %s len %d %dms", ah.Name.String(), r.Priority, r.Weight, r.Port, r.Target, len(a), rtt.Nanoseconds()/1000000)
 				} else {
-					p.SkipAnswer()
+					if p.SkipAnswer() != nil {
+						invalidResponse = true
+						break
+					}
 				}
 			case dnsmessage.TypeHTTPS:
-				r, _ := p.HTTPSResource()
+				r, err := p.HTTPSResource()
+				if err != nil {
+					invalidResponse = true
+					break
+				}
 				if *verbose {
 					fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
 					if r.ALPN != nil {
@@ -497,7 +548,12 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				if *verbose {
 					fmt.Fprintf(&buf, " %s len %d %dms", ah.Name.String(), len(a), rtt.Nanoseconds()/1000000)
 				}
-				p.SkipAnswer()
+				if p.SkipAnswer() != nil {
+					invalidResponse = true
+				}
+			}
+			if invalidResponse {
+				break
 			}
 			if *verbose {
 				if tooFast {
@@ -506,6 +562,9 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				bufs = append(bufs, buf)
 			}
 		} // answer section parsed
+		if invalidResponse {
+			continue
+		}
 		if *verbose && ansCount == 0 {
 			var buf bytes.Buffer
 			fmt.Fprintf(&buf, "%d %s Answer[Empty] len %d %dms", h.ID, ns.udpAddr, len(a), rtt.Nanoseconds()/1000000)
@@ -517,7 +576,13 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				break
 			}
 			authCount++
-			p.SkipAuthority()
+			if p.SkipAuthority() != nil {
+				invalidResponse = true
+				break
+			}
+		}
+		if invalidResponse {
+			continue
 		}
 		addtCount := 0
 		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
@@ -540,7 +605,13 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					}
 				}
 			}
-			p.SkipAdditional()
+			if p.SkipAdditional() != nil {
+				invalidResponse = true
+				break
+			}
+		}
+		if invalidResponse {
+			continue
 		}
 		if *verbose {
 			if optErr {
