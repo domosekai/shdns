@@ -363,6 +363,9 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			errlog.Println(err)
 			continue
 		}
+		if !h.Response || h.Truncated {
+			continue
+		}
 		p.SkipAllQuestions()
 		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr bool
 		ansCount := 0
