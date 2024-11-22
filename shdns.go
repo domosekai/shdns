@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"shdns/dnsmessage"
@@ -46,6 +47,7 @@ var minrtt = flag.Int("m", 30, "Minimum possible RTT (ms) for foreign nameserver
 var minsafe = flag.Int("s", 100, "Minimum safe RTT (ms) for foreign nameservers. Packets with longer RTT will be immediately accepted. Packets with shorter RTT will be delayed until this threshold.")
 var minwait = flag.Int("w", 100, "Time (ms) during which domestic answers are prioritized. Usually used with a local caching resolver.")
 var timeout = flag.Int("M", 3000, "DNS query timeout (ms). Use a larger value for high-latency network or DNS-over-HTTPS.")
+var reversenet = flag.String("r", "", "Address and port for listening to reverse DNS queries.")
 var verbose = flag.Bool("v", false, "Verbose mode. Connection will remain open after replied until timeout.")
 var showver = flag.Bool("V", false, "Show version")
 var version = "unknown"
@@ -68,6 +70,16 @@ type answer struct {
 	sType   serverType
 }
 
+type cacheEntry struct {
+	value    string
+	modified time.Time
+}
+
+type cache struct {
+	entries map[string]cacheEntry
+	rw      sync.RWMutex
+}
+
 type byByte []net.IPNet
 
 func (n byByte) Len() int { return len(n) }
@@ -87,6 +99,7 @@ var (
 	cnIPNet4, cnIPNet6   []net.IPNet
 	blackIPs4, blackIPs6 []net.IPNet
 	servers              []nameserver
+	reverseTable         cache
 	logger               = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	errlog               = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 )
@@ -193,6 +206,60 @@ func addTag(bufs []bytes.Buffer, tag string) {
 	}
 }
 
+func (c *cache) add(key, value string) {
+	c.rw.Lock()
+	defer c.rw.Unlock()
+	c.entries[key] = cacheEntry{value, time.Now()}
+}
+
+func (c *cache) insert(m map[string]string) {
+	c.rw.Lock()
+	defer c.rw.Unlock()
+	t := time.Now()
+	for key, value := range m {
+		c.entries[key] = cacheEntry{value, t}
+	}
+}
+
+func (c *cache) lookup(key string) string {
+	c.rw.RLock()
+	defer c.rw.RUnlock()
+	if e, ok := c.entries[key]; ok {
+		return e.value
+	}
+	return ""
+}
+
+func (c *cache) purge(t time.Duration) {
+	c.rw.Lock()
+	defer c.rw.Unlock()
+	for key, value := range c.entries {
+		if value.modified.Add(t).Before(time.Now()) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+func handleReverse(conn *net.UDPConn) {
+	defer conn.Close()
+	for {
+		var payload [1500]byte
+		if n, addr, err := conn.ReadFromUDP(payload[:]); err != nil {
+			errlog.Println(err)
+		} else if (n == 5 || n == 17) && payload[0] == 1 {
+			ip := net.IP(payload[1:n])
+			host := reverseTable.lookup(ip.String())
+			// remove trailing dot (if any)
+			host = strings.TrimSuffix(host, ".")
+			op := []byte{2}
+			_, err := conn.WriteToUDP(append(op, []byte(host)...), addr)
+			if err != nil {
+				errlog.Println(err)
+			}
+		}
+	}
+}
+
 func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // net.Addr is *net.UDPAddr, net.PacketConn is *net.UDPConn
 	var p dnsmessage.Parser
 	h, err := p.Start(payload)
@@ -202,7 +269,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 	}
 	var bufs []bytes.Buffer
 	qs, err := p.AllQuestions()
-	if err != nil {
+	if err != nil || len(qs) == 0 {
 		return
 	}
 	if *verbose {
@@ -375,6 +442,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr, invalidResponse bool
 		ansCount := 0
 		var bufs []bytes.Buffer
+		reverse := make(map[string]string)
 		for {
 			// each loop parses one answer from a reply packet
 			ah, err := p.AnswerHeader()
@@ -389,13 +457,16 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			switch ah.Type {
 			case dnsmessage.TypeA:
 				hasA = true
-				if cnIPNet4 != nil || blackIPs4 != nil || *verbose {
+				if cnIPNet4 != nil || blackIPs4 != nil || *verbose || *reversenet != "" {
 					r, err := p.AResource()
 					if err != nil {
 						invalidResponse = true
 						break
 					}
 					ip := net.IP(r.A[:]) //r.A is 4-byte
+					if *reversenet != "" {
+						reverse[ip.String()] = ah.Name.String()
+					}
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
 					}
@@ -429,13 +500,16 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				}
 			case dnsmessage.TypeAAAA:
 				hasAAAA = true
-				if cnIPNet6 != nil || blackIPs6 != nil || *verbose {
+				if cnIPNet6 != nil || blackIPs6 != nil || *verbose || *reversenet != "" {
 					r, err := p.AAAAResource()
 					if err != nil {
 						invalidResponse = true
 						break
 					}
 					ip := net.IP(r.AAAA[:])
+					if *reversenet != "" {
+						reverse[ip.String()] = ah.Name.String()
+					}
 					if *verbose {
 						fmt.Fprintf(&buf, " %s %s len %d %dms", ah.Name.String(), ip.String(), len(a), rtt.Nanoseconds()/1000000)
 					}
@@ -524,25 +598,35 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					invalidResponse = true
 					break
 				}
-				if *verbose {
-					fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
-					if r.ALPN != nil {
-						fmt.Fprintf(&buf, " alpn %s", r.ALPN)
-					}
-					if r.Port != 0 {
-						fmt.Fprintf(&buf, " port %d", r.Port)
+				if *verbose || *reversenet != "" {
+					if *verbose {
+						fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
+						if r.ALPN != nil {
+							fmt.Fprintf(&buf, " alpn %s", r.ALPN)
+						}
+						if r.Port != 0 {
+							fmt.Fprintf(&buf, " port %d", r.Port)
+						}
 					}
 					if r.IPv4Hint != nil {
 						for i := range r.IPv4Hint {
-							fmt.Fprintf(&buf, " %s", net.IP(r.IPv4Hint[i][:]).String())
+							if *verbose {
+								fmt.Fprintf(&buf, " %s", net.IP(r.IPv4Hint[i][:]).String())
+							}
+							reverse[net.IP(r.IPv4Hint[i][:]).String()] = ah.Name.String()
 						}
 					}
 					if r.IPv6Hint != nil {
 						for i := range r.IPv6Hint {
-							fmt.Fprintf(&buf, " %s", net.IP(r.IPv6Hint[i][:]).String())
+							if *verbose {
+								fmt.Fprintf(&buf, " %s", net.IP(r.IPv6Hint[i][:]).String())
+							}
+							reverse[net.IP(r.IPv6Hint[i][:]).String()] = ah.Name.String()
 						}
 					}
-					fmt.Fprintf(&buf, " len %d %dms", len(a), rtt.Nanoseconds()/1000000)
+					if *verbose {
+						fmt.Fprintf(&buf, " len %d %dms", len(a), rtt.Nanoseconds()/1000000)
+					}
 				}
 			default:
 				if *verbose {
@@ -650,6 +734,10 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					chSave <- a
 				}
 			}
+			// add to cache for reverse lookup (even for those saved but not used)
+			if *reversenet != "" {
+				reverseTable.insert(reverse)
+			}
 		} else if h.RCode == dnsmessage.RCodeServerFailure && ns.sType == foreign {
 			if *verbose {
 				addTag(bufs, " [SAVE]")
@@ -729,6 +817,21 @@ func main() {
 	}
 	defer inConn.Close()
 	logger.Printf("Listening on UDP %s", addr)
+	if *reversenet != "" {
+		reverseTable.entries = make(map[string]cacheEntry)
+		if addr, err := net.ResolveUDPAddr("udp", *reversenet); err == nil {
+			conn, err := net.ListenUDP("udp", addr)
+			if err == nil {
+				go func() {
+					ticker := time.Tick(15 * time.Minute)
+					for range ticker {
+						reverseTable.purge(time.Hour * 3)
+					}
+				}()
+				go handleReverse(conn)
+			}
+		}
+	}
 	for {
 		var payload [1500]byte
 		if n, addr, err := inConn.ReadFromUDP(payload[:]); err != nil {
