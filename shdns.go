@@ -354,7 +354,8 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) { // ne
 							}
 							answered = true
 						}
-					} else if a.sType == domestic || !waiting || qs[0].Type != dnsmessage.TypeA && qs[0].Type != dnsmessage.TypeAAAA {
+					} else if a.sType == domestic || !waiting || qs[0].Type != dnsmessage.TypeA && qs[0].Type != dnsmessage.TypeAAAA && qs[0].Type != dnsmessage.TypeHTTPS {
+						// assume domestic nameservers can handle A, AAAA and HTTPS properly
 						if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
 							errlog.Println(err)
 						}
@@ -454,7 +455,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 		if p.SkipAllQuestions() != nil {
 			continue
 		}
-		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, inBlacklist, dnssecErr, optErr, invalidResponse bool
+		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, hasHTTPS, inBlacklist, dnssecErr, optErr, invalidResponse bool
 		ansCount := 0
 		var bufs []bytes.Buffer
 		reverse := make(map[string]string)
@@ -507,7 +508,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 						break
 					}
 				}
-				if qType == dnsmessage.TypeAAAA {
+				if qType == dnsmessage.TypeAAAA || qType == dnsmessage.TypeHTTPS {
 					typeErr = true
 					if *verbose {
 						fmt.Fprint(&buf, " TYPEERR")
@@ -608,6 +609,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					}
 				}
 			case dnsmessage.TypeHTTPS:
+				hasHTTPS = true
 				r, err := p.HTTPSResource()
 				if err != nil {
 					invalidResponse = true
@@ -684,8 +686,8 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			continue
 		}
 		addtCount := 0
-		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
-		optErr = hasOPT && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA)
+		dnssecErr = dnssec && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS)
+		optErr = hasOPT && (ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS)
 		for {
 			rh, err := p.AdditionalHeader()
 			if err != nil {
@@ -696,7 +698,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 			case dnsmessage.TypeOPT:
 				optErr = false
 				// ISP nameservers most likely cannot hold DNSSEC query
-				if ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA {
+				if ns.sType == foreign || qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS {
 					if dnssec == rh.DNSSECAllowed() {
 						dnssecErr = false
 					} else {
@@ -727,7 +729,8 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 		if ns.sType == foreign && *trusted || !dnssecErr && (!geoErr || *fast && ansCount > 1) && !typeErr && !optErr && !tooFast && !inBlacklist &&
 			(h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeA && (hasA || ns.sType == foreign) ||
 				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeAAAA && (hasAAAA || authCount > 0 || ns.sType == foreign) ||
-				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && ns.sType == foreign ||
+				h.RCode == dnsmessage.RCodeSuccess && qType == dnsmessage.TypeHTTPS && (hasHTTPS || authCount > 0 || ns.sType == foreign) ||
+				h.RCode == dnsmessage.RCodeSuccess && qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS && ns.sType == foreign ||
 				h.RCode == dnsmessage.RCodeNameError && ns.sType == foreign) {
 			switch ns.sType {
 			case domestic:
@@ -736,7 +739,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 				}
 				chAnswer <- answer{a, domestic}
 			case foreign:
-				if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA ||
+				if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS ||
 					rtt > time.Duration(*minsafe)*time.Millisecond || hasCNAME || ansCount > 1 {
 					if *verbose {
 						addTag(bufs, " [ACCEPT]")
