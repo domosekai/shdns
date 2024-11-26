@@ -184,8 +184,14 @@ Dependence
 
   shdns relies on a modified version of golang.org/x/net/dns/dnsmessage.
 
+Credit
+----
+
+  China IP data provided by [IPIP.NET] and APNIC.
+
 [ChinaDNS]: https://github.com/shadowsocks/ChinaDNS
 [overture]: https://github.com/shawn1m/overture
 [freedns-go]: https://github.com/tuna/freedns-go
 [yadd]: https://github.com/sticnarf/yadd
 [ChinaDNS 2]: https://github.com/aa65535/ChinaDNS
+[IPIP.NET]: https://github.com/17mon/china_ip_list/
