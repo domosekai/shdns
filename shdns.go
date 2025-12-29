@@ -615,35 +615,71 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer chan<- answer,
 					invalidResponse = true
 					break
 				}
-				if *verbose || *reversenet != "" {
-					if *verbose {
-						fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
-						if r.ALPN != nil {
-							fmt.Fprintf(&buf, " alpn %s", r.ALPN)
-						}
-						if r.Port != 0 {
-							fmt.Fprintf(&buf, " port %d", r.Port)
-						}
+				if *verbose {
+					fmt.Fprintf(&buf, " %s %d %s", ah.Name.String(), r.Priority, r.Target)
+					if r.ALPN != nil {
+						fmt.Fprintf(&buf, " alpn %s", r.ALPN)
 					}
-					if r.IPv4Hint != nil {
-						for i := range r.IPv4Hint {
-							if *verbose {
-								fmt.Fprintf(&buf, " %s", net.IP(r.IPv4Hint[i][:]).String())
+					if r.Port != 0 {
+						fmt.Fprintf(&buf, " port %d", r.Port)
+					}
+				}
+				if r.IPv4Hint != nil {
+					for i := range r.IPv4Hint {
+						ip := net.IP(r.IPv4Hint[i][:])
+						if *verbose {
+							fmt.Fprintf(&buf, " %s", ip.String())
+						}
+						if *reversenet != "" {
+							reverse[ip.String()] = qName
+						}
+						if ns.sType == domestic && cnIPNet4 != nil {
+							if !findIPInNet(ip, cnIPNet4) {
+								geoErr = true
+								if *verbose {
+									fmt.Fprint(&buf, " GEOERR")
+								}
 							}
-							reverse[net.IP(r.IPv4Hint[i][:]).String()] = qName
 						}
-					}
-					if r.IPv6Hint != nil {
-						for i := range r.IPv6Hint {
-							if *verbose {
-								fmt.Fprintf(&buf, " %s", net.IP(r.IPv6Hint[i][:]).String())
+						if blackIPs4 != nil {
+							if findIPInNet(ip, blackIPs4) {
+								inBlacklist = true
+								if *verbose {
+									fmt.Fprint(&buf, " BLACKLIST")
+								}
 							}
-							reverse[net.IP(r.IPv6Hint[i][:]).String()] = qName
 						}
 					}
-					if *verbose {
-						fmt.Fprintf(&buf, " len %d %dms", len(a), rtt.Nanoseconds()/1000000)
+				}
+				if r.IPv6Hint != nil {
+					for i := range r.IPv6Hint {
+						ip := net.IP(r.IPv6Hint[i][:])
+						if *verbose {
+							fmt.Fprintf(&buf, " %s", ip.String())
+						}
+						if *reversenet != "" {
+							reverse[ip.String()] = qName
+						}
+						if ns.sType == domestic && cnIPNet6 != nil {
+							if !findIPInNet(ip, cnIPNet6) {
+								geoErr = true
+								if *verbose {
+									fmt.Fprint(&buf, " GEOERR")
+								}
+							}
+						}
+						if blackIPs6 != nil {
+							if findIPInNet(ip, blackIPs6) {
+								inBlacklist = true
+								if *verbose {
+									fmt.Fprint(&buf, " BLACKLIST")
+								}
+							}
+						}
 					}
+				}
+				if *verbose {
+					fmt.Fprintf(&buf, " len %d %dms", len(a), rtt.Nanoseconds()/1000000)
 				}
 			default:
 				if *verbose {
