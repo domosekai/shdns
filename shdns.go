@@ -65,6 +65,7 @@ type answer struct {
 	payload []byte
 	sType   serverType
 	ips     []net.IP
+	ns      string // endpoint that produced this answer
 }
 
 var (

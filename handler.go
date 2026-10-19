@@ -118,7 +118,7 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) {
 		return
 	}
 	defer outConn.Close()
-	go forwardQueryAndReply(payload, outConn, chAnswer, chSave, chFail, qs[0].Type, qs[0].Name.String(), hasOPT, dnssec)
+	go forwardQueryAndReply(payload, outConn, chAnswer, chSave, chFail, qs[0].Type, hasOPT, dnssec)
 	qName := qs[0].Name.String()
 	answered := false
 	waiting := true
@@ -135,17 +135,13 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) {
 						waiting = false
 						if waitedAnswer.payload != nil {
 							addIPsToSet(waitedAnswer.ips, qName, h.ID)
-							if _, err := inConn.WriteToUDP(waitedAnswer.payload, addr); err != nil {
-								errlog.Println(err)
-							}
+							sendAnswer(inConn, addr, waitedAnswer, qName)
 							answered = true
 						}
 					} else if a.sType == domestic || !waiting || qs[0].Type != dnsmessage.TypeA && qs[0].Type != dnsmessage.TypeAAAA && qs[0].Type != dnsmessage.TypeHTTPS {
 						// assume domestic nameservers can handle A, AAAA and HTTPS properly
 						addIPsToSet(a.ips, qName, h.ID)
-						if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
-							errlog.Println(err)
-						}
+						sendAnswer(inConn, addr, a, qName)
 						answered = true
 					} else if waitedAnswer.payload == nil {
 						waitedAnswer = a
@@ -173,17 +169,13 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) {
 			waiting = false
 			if !answered && waitedAnswer.payload != nil {
 				addIPsToSet(waitedAnswer.ips, qName, h.ID)
-				if _, err := inConn.WriteToUDP(waitedAnswer.payload, addr); err != nil {
-					errlog.Println(err)
-				}
+				sendAnswer(inConn, addr, waitedAnswer, qName)
 				answered = true
 			}
 		case <-timerSafe.C:
 			if !answered && savedAnswer.payload != nil {
 				addIPsToSet(savedAnswer.ips, qName, h.ID)
-				if _, err := inConn.WriteToUDP(savedAnswer.payload, addr); err != nil {
-					errlog.Println(err)
-				}
+				sendAnswer(inConn, addr, savedAnswer, qName)
 				answered = true
 			}
 		case a := <-chSave:
@@ -198,17 +190,36 @@ func handleQuery(addr *net.UDPAddr, payload []byte, inConn *net.UDPConn) {
 	}
 }
 
-func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- answer, chFail chan<- []byte, qType dnsmessage.Type, qName string, hasOPT, dnssec bool) {
+func cacheReverse(a answer, qName string) {
+	if *reversenet == "" || len(a.ips) == 0 {
+		return
+	}
+	reverse := make(map[string]string, len(a.ips))
+	for _, ip := range a.ips {
+		reverse[ip.String()] = qName
+	}
+	reverseTable.insert(reverse, a.ns)
+}
+
+func sendAnswer(inConn *net.UDPConn, addr *net.UDPAddr, a answer, qName string) {
+	if _, err := inConn.WriteToUDP(a.payload, addr); err != nil {
+		errlog.Println(err)
+		return
+	}
+	cacheReverse(a, qName)
+}
+
+func forwardQueryAndReply(payload []byte, outConn *net.UDPConn, chAnswer, chSave chan<- answer, chFail chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	defer close(chAnswer)
 	sentTime := time.Now()
 	for _, ns := range servers {
 		outConn.WriteToUDP(payload, ns.udpAddr)
 	}
 	outConn.SetReadDeadline(sentTime.Add(time.Duration(*timeout) * time.Millisecond))
-	parseAnswers(outConn, sentTime, chAnswer, chSave, chFail, qType, qName, hasOPT, dnssec)
+	parseAnswers(outConn, sentTime, chAnswer, chSave, chFail, qType, hasOPT, dnssec)
 }
 
-func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<- answer, chFail chan<- []byte, qType dnsmessage.Type, qName string, hasOPT, dnssec bool) {
+func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<- answer, chFail chan<- []byte, qType dnsmessage.Type, hasOPT, dnssec bool) {
 	for {
 		var payload [5000]byte
 		// receive from nameserver
@@ -244,7 +255,6 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 		var geoErr, typeErr, hasCNAME, hasA, hasAAAA, hasHTTPS, inBlacklist, dnssecErr, optErr, invalidResponse bool
 		ansCount := 0
 		var bufs []bytes.Buffer
-		reverse := make(map[string]string)
 		var ips []net.IP
 		for {
 			// each loop parses one answer from a reply packet
@@ -267,10 +277,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 						break
 					}
 					ip := net.IP(r.A[:]) //r.A is 4-byte
-					if *reversenet != "" {
-						reverse[ip.String()] = qName
-					}
-					if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 {
+					if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 || *reversenet != "" {
 						ips = append(ips, ip)
 					}
 					if *verbose {
@@ -309,10 +316,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 						break
 					}
 					ip := net.IP(r.AAAA[:])
-					if *reversenet != "" {
-						reverse[ip.String()] = qName
-					}
-					if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 {
+					if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 || *reversenet != "" {
 						ips = append(ips, ip)
 					}
 					if *verbose {
@@ -415,10 +419,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 						if *verbose {
 							fmt.Fprintf(&buf, " %s", ip.String())
 						}
-						if *reversenet != "" {
-							reverse[ip.String()] = qName
-						}
-						if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 {
+						if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 || *reversenet != "" {
 							ips = append(ips, ip)
 						}
 						if checkIPGeo(ip, ns.sType, false) {
@@ -441,10 +442,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 						if *verbose {
 							fmt.Fprintf(&buf, " %s", ip.String())
 						}
-						if *reversenet != "" {
-							reverse[ip.String()] = qName
-						}
-						if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 {
+						if len(ipsetSpecs) > 0 || len(nftSetSpecs) > 0 || *reversenet != "" {
 							ips = append(ips, ip)
 						}
 						if checkIPGeo(ip, ns.sType, true) {
@@ -556,24 +554,20 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 				if *verbose {
 					addTag(bufs, " [ACCEPT]")
 				}
-				chAnswer <- answer{a, domestic, ips}
+				chAnswer <- answer{a, domestic, ips, ns.udpAddr.String()}
 			case foreign:
 				if qType != dnsmessage.TypeA && qType != dnsmessage.TypeAAAA && qType != dnsmessage.TypeHTTPS ||
 					rtt > time.Duration(*minsafe)*time.Millisecond || hasCNAME || ansCount > 1 {
 					if *verbose {
 						addTag(bufs, " [ACCEPT]")
 					}
-					chAnswer <- answer{a, foreign, ips}
+					chAnswer <- answer{a, foreign, ips, ns.udpAddr.String()}
 				} else {
 					if *verbose {
 						addTag(bufs, " [SAVE]")
 					}
-					chSave <- answer{a, foreign, ips}
+					chSave <- answer{a, foreign, ips, ns.udpAddr.String()}
 				}
-			}
-			// add to cache for reverse lookup (even for those saved but not used)
-			if *reversenet != "" {
-				reverseTable.insert(reverse, ns.udpAddr.String())
 			}
 		} else if h.RCode == dnsmessage.RCodeServerFailure && ns.sType == foreign {
 			if *verbose {
@@ -583,7 +577,7 @@ func parseAnswers(conn *net.UDPConn, sentTime time.Time, chAnswer, chSave chan<-
 		} else {
 			// send empty answer to signal that domestic has replied
 			if ns.sType == domestic {
-				chAnswer <- answer{nil, domestic, nil}
+				chAnswer <- answer{nil, domestic, nil, ""}
 			}
 			if *verbose {
 				addTag(bufs, " [DROP]")
